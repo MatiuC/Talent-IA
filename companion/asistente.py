@@ -96,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/' and self.allowed() and not self.headers.get('Origin') and (self.headers.get('Sec-Fetch-Site', 'none') in {'none', 'same-origin'} or self.headers.get('Sec-Fetch-Mode') == 'navigate'):
-            self.respond(200, '<!doctype html><meta charset="utf-8"><title>Asistente TalentIA</title><body style="font:18px system-ui;max-width:650px;margin:80px auto"><h1>Conecta tu IA con TalentIA</h1><p>Copia esta clave en Configuración → Motor de este computador. No la compartas.</p><textarea readonly style="width:100%;padding:20px">'+KEY+'</textarea><p>Mantén el asistente y Ollama abiertos mientras analizas. El modelo se conserva al cerrar.</p></body>', True)
+            self.respond(200, '<!doctype html><meta charset="utf-8"><title>Asistente TalentIA</title><body style="font:18px system-ui;max-width:650px;margin:80px auto"><h1>Conecta tu IA con TalentIA</h1><p>Copia esta clave en Configuración → Motor de este computador. No la compartas.</p><textarea readonly style="width:100%;padding:20px">'+KEY+'</textarea><p>Mantén el asistente y LM Studio (u Ollama, si lo usas) abiertos mientras analizas. El modelo se conserva al cerrar.</p></body>', True)
             return
         if not self.authenticated():
             self.respond(403, {'error': 'Origen o clave de vinculación no válidos.'}); return

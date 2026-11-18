@@ -1,6 +1,12 @@
 ## Usar Qwen ya descargado en LM Studio
 
-Abre el servidor de LM Studio en 127.0.0.1:1234 con qwen3.5-2b disponible. El asistente lo detecta y lo prioriza sin descargar Ollama ni otro modelo. Mantén LM Studio y el asistente abiertos.
+Abre el servidor de LM Studio en 127.0.0.1:1234 con qwen3.5-2b disponible. El asistente lo detecta y lo prioriza sin descargar Ollama ni otro modelo. Mantén LM Studio y el asistente abiertos. Para iniciar el asistente sin instalar Ollama, ejecuta desde esta carpeta:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Iniciar-LMStudio.ps1
+```
+
+Después abre http://127.0.0.1:11435 y copia la clave en Configuración de TalentIA. Esta es una clave de vinculación de TalentIA, no una API key de LM Studio. Si la página no abre, comprueba que la terminal del asistente siga abierta; tener solo LM Studio abierto no basta.
 
 # Asistente local TalentIA (Windows)
 
@@ -19,4 +25,4 @@ El navegador puede solicitar permiso para acceder a la red local. Debes permitir
 
 Los PDF y los resultados se guardan en el servidor de TalentIA; la inferencia ocurre en tu computador. No se promete que los CV nunca salgan del equipo. No hay envío de prompts a servicios de IA en la nube.
 
-No borres la carpeta .ollama/models de tu usuario si quieres conservar el modelo. La clave se conserva en .talentia-companion-key. Este primer instalador está orientado a Windows; macOS/Linux requieren instalar Ollama y ejecutar asistente.py manualmente.
+No borres la carpeta .ollama/models de tu usuario si quieres conservar el modelo. En Windows la clave se conserva en %LOCALAPPDATA%/TalentIA/companion-key. Este primer instalador está orientado a Windows; macOS/Linux requieren instalar Ollama y ejecutar asistente.py manualmente.
