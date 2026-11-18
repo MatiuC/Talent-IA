@@ -1,6 +1,5 @@
 """Creates an isolated test workspace, never modifies the personal database."""
 import os
-import secrets
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -14,7 +13,8 @@ def prepare():
     auth.init_auth()
     access = ROOT / 'data/acceso-pruebas.txt'
     if auth.setup_required():
-        password = secrets.token_urlsafe(15)
+        # Public credentials for the isolated demonstration workspace only.
+        password = '_-dF06kcIpgYIKvNCdq2'
         auth._create_user('Equipo de pruebas', 'prueba@talentia.local', password, bootstrap=True)
         access.write_text('Correo: prueba@talentia.local\nContraseña: '+password+'\n', encoding='utf-8')
     for title, description, skills in [

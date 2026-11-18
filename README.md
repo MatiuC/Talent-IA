@@ -15,7 +15,14 @@ cd Talent-IA
 powershell -ExecutionPolicy Bypass -File .\probar-local.ps1
 ```
 
-Este comando instala las dependencias, crea una base aislada `data/pruebas.db`, una cuenta `prueba@talentia.local` con contraseña aleatoria y dos vacantes (Analista de datos junior y Soporte técnico). La contraseña aparece en la terminal y se guarda únicamente en `data/acceso-pruebas.txt`, excluido de Git. Cada instalación tiene su propia contraseña. No modifica una base personal existente.
+Este comando instala las dependencias, crea una base aislada `data/pruebas.db`, una cuenta pública de demostración y dos vacantes (Analista de datos junior y Soporte técnico). No modifica una base personal existente.
+
+**Acceso público de pruebas:**
+
+- Correo: `prueba@talentia.local`
+- Contraseña: `_-dF06kcIpgYIKvNCdq2`
+
+Las nuevas instalaciones usan estas mismas credenciales, que también aparecen en la terminal y se guardan en `data/acceso-pruebas.txt`, excluido de Git. Si ya creaste una cuenta con otra contraseña, conserva la original. Este acceso compartido es solo para demostraciones con datos de prueba.
 
 Abre http://localhost:8001 y entra con esas credenciales. Mantén la terminal abierta.
 
@@ -63,4 +70,4 @@ python3 companion/asistente.py --origin http://localhost:8001
 
 Las pruebas usan bases temporales y simulan los servicios externos. Se verificó además una extracción real del CV con Qwen en LM Studio. La integración con Google y la interfaz antigua de Streamlit son históricas y no hacen falta para este recorrido.
 
-Para publicar el backend en Internet, consulta ARQUITECTURA-CLIENTE.md. GitHub almacena el código; no ejecuta este servidor Python. No publiques `data/`, `.env`, claves ni credenciales.
+Para publicar el backend en Internet, consulta ARQUITECTURA-CLIENTE.md. GitHub almacena el código; no ejecuta este servidor Python. No publiques `data/`, `.env`, claves ni credenciales personales. Las credenciales de demostración anteriores son públicas intencionalmente.
