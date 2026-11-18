@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# TalentIA - Exclusiones de control de versiones
+# ---------------------------------------------------------------------------
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Caché e intermedios de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Bases de datos locales (cada desarrollador genera la suya)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+data/talentia.db*
+
+# Currículums y archivos privados subidos por el usuario
+data/uploads/*
+!data/uploads/.gitkeep
+
+# Variables de entorno locales
+.env
+.env.local
+.env.*.local
+
+# Credenciales sensibles de Google (NUNCA deben subirse)
+credentials.json
+token.json
+client_secret*.json
+*.pem
+
+# Logs locales
+*.log
+logs/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Editores y sistemas operativos
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Datos y accesos de cualquier instalación local
+data/
+companion/OllamaSetup.exe

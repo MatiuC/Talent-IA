@@ -1,0 +1,9 @@
+# Python 3.12+; dependencias verificadas del prototipo web
+fastapi==0.165.0
+uvicorn==0.54.0
+python-multipart==0.0.34
+httpx==0.28.1
+pydantic==2.14.3
+python-dotenv==1.2.4
+PyMuPDF==1.28.2
+psutil==7.2.2
