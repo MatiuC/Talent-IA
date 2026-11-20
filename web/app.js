@@ -37,7 +37,18 @@ const jobTitle=id=>state.vacancies.find(v=>v.id===Number(id))?.titulo||'Vacante'
 const pending=()=>state.candidates.filter(c=>['PENDIENTE_REVISION','REVISION_MANUAL','CONTACTO_PENDIENTE'].includes(c.estado));
 let toastTimer,renderVersion=0;
 function toast(message,error=false){const el=$('#toast');el.textContent=message;el.className='visible'+(error?' error':'');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.className='',6000)}
-async function api(path,options={}){const headers={'X-TalentIA-Request':'1',...(options.headers||{})};if(options.body&&!(options.body instanceof FormData)){headers['Content-Type']='application/json';options.body=JSON.stringify(options.body)}const res=await fetch('/api'+path,{...options,headers,credentials:'same-origin'});let data;try{data=await res.json()}catch{throw new Error('No pudimos leer la respuesta del servidor. Inténtalo de nuevo.')}if(!res.ok){if(res.status===401&&!path.startsWith('/auth/')){state.user=null;authScreen();throw new Error('Tu sesión terminó. Vuelve a iniciar sesión.')}const detail=data.detail;throw new Error(Array.isArray(detail)?detail.map(x=>x.msg).join('. '):detail||'No se pudo completar la solicitud.')}return data}
+// Use a conventional multipart upload for compatibility with local HTTP servers.
+function uploadRequest(url,options,headers){return new Promise((resolve,reject)=>{
+ const xhr=new XMLHttpRequest();xhr.open(options.method||'POST',url);xhr.timeout=300000;
+ for(const [name,value] of Object.entries(headers))xhr.setRequestHeader(name,value);
+ xhr.upload.onprogress=e=>{const el=document.querySelector('#upload-progress');if(el&&e.lengthComputable)el.textContent=`Subiendo documentos · ${Math.round(e.loaded/e.total*100)}%`;};
+ xhr.onload=()=>resolve({ok:xhr.status>=200&&xhr.status<300,status:xhr.status,json:async()=>JSON.parse(xhr.responseText)});
+ xhr.onerror=()=>reject(new Error('No se pudieron subir los PDF. Comprueba que TalentIA siga abierta en el servidor y vuelve a intentarlo.'));
+ xhr.ontimeout=()=>reject(new Error('La subida tardó demasiado. Prueba con un lote más pequeño.'));
+ xhr.onabort=()=>reject(new Error('La subida fue cancelada.'));
+ xhr.send(options.body);
+});}
+async function api(path,options={}){const headers={'X-TalentIA-Request':'1',...(options.headers||{})};if(options.body&&!(options.body instanceof FormData)){headers['Content-Type']='application/json';options.body=JSON.stringify(options.body)}const res=options.body instanceof FormData?await uploadRequest('/api'+path,options,headers):await fetch('/api'+path,{...options,headers,credentials:'same-origin'});let data;try{data=await res.json()}catch{throw new Error('No pudimos leer la respuesta del servidor. Inténtalo de nuevo.')}if(!res.ok){if(res.status===401&&!path.startsWith('/auth/')){state.user=null;authScreen();throw new Error('Tu sesión terminó. Vuelve a iniciar sesión.')}const detail=data.detail;throw new Error(Array.isArray(detail)?detail.map(x=>x.msg).join('. '):detail||'No se pudo completar la solicitud.')}return data}
 function isDemo(){if(!state.demo)return false;toast('Esta es una vista de ejemplo. Entra a tu espacio para guardar cambios.');return true}
 
 function authScreen(message=''){

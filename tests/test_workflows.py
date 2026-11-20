@@ -228,9 +228,13 @@ class WorkflowTests(unittest.TestCase):
             job = result.json()["jobs"][0]
             self.assertTrue(job['legible'])
             self.assertIn('messages', job)
+            pending = self.client.get(f'/api/vacantes/{vacancy_id}/pendientes-local')
+            self.assertEqual(pending.status_code, 200)
+            self.assertEqual([j['id'] for j in pending.json()['jobs']], [job['id']])
             evaluation, _ = self.evaluation()
             saved = self.client.post(f"/api/candidatos/{job['id']}/resultado-local", json={"evaluacion": evaluation.model_dump(), "latencia": 2})
             self.assertEqual(saved.status_code, 200, saved.text)
+            self.assertEqual(self.client.get(f'/api/vacantes/{vacancy_id}/pendientes-local').json()['jobs'], [])
             self.assertEqual(self.client.get(f"/api/candidatos/{job['id']}").json()['puntaje'], 4)
             server_model.assert_not_awaited()
             repeated = self.client.post(f"/api/candidatos/{job['id']}/resultado-local", json={"evaluacion": evaluation.model_dump()})
