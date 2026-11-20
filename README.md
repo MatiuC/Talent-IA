@@ -71,3 +71,7 @@ python3 companion/asistente.py --origin http://localhost:8001
 Las pruebas usan bases temporales y simulan los servicios externos. Se verificó además una extracción real del CV con Qwen en LM Studio. La integración con Google y la interfaz antigua de Streamlit son históricas y no hacen falta para este recorrido.
 
 Para publicar el backend en Internet, consulta ARQUITECTURA-CLIENTE.md. GitHub almacena el código; no ejecuta este servidor Python. No publiques `data/`, `.env`, claves ni credenciales personales. Las credenciales de demostración anteriores son públicas intencionalmente.
+
+## Google Calendar y Gmail opcionales
+
+Cada reclutador puede conectar su propia cuenta desde Configuración. Sigue [GOOGLE.md](GOOGLE.md) para configurar el cliente OAuth de Google Cloud. La integración requiere consentimiento y confirmación de cada entrevista; sin conectar Google se conserva el modo simulación. Usa cuentas TalentIA individuales, no la cuenta pública compartida, para conexiones personales.

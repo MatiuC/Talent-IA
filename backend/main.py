@@ -154,6 +154,8 @@ app.add_middleware(
 )
 
 install_auth(app)
+from backend.google_accounts import RecruiterGoogle, install as install_google
+install_google(app)
 
 app.mount("/assets", StaticFiles(directory=BASE_DIR / "web", check_dir=False), name="assets")
 
@@ -205,7 +207,8 @@ async def raiz() -> FileResponse:
 
 
 @app.get("/api/health", response_model=EstadoSalud, tags=["Sistema"])
-async def salud() -> EstadoSalud:
+async def salud(request: Request) -> EstadoSalud:
+    google_services = RecruiterGoogle(request.state.user['id'])
     """Verificacion previa a la demo: Ollama, modelo, base de datos y Google."""
     estado_ollama = await verificar_ollama()
     bd_ok = await asyncio.to_thread(db.base_datos_disponible)
@@ -617,6 +620,7 @@ async def aprobar_candidato(
     if fecha <= datetime.now(timezone.utc):
         raise HTTPException(status_code=422, detail="Elige una fecha y hora futuras para la entrevista.")
     solicitud.fecha_hora_entrevista = fecha
+    google_services = RecruiterGoogle(request.state.user['id'])
     if google_services.modo == "real" and not solicitud.confirmar_envio_real:
         raise HTTPException(status_code=409, detail="Confirma el envío real de la invitación antes de continuar.")
 

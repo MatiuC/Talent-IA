@@ -159,7 +159,7 @@ class WorkflowTests(unittest.TestCase):
             "evento_id": "", "enlace_evento": "", "mensaje": "Entrevista guardada en simulación.",
             "payload": {"calendar_event": {"summary": "Entrevista de prueba"}, "email": {"para": "candidate@example.test"}},
         }
-        with patch("backend.main.google_services", google):
+        with patch("backend.main.RecruiterGoogle", return_value=google):
             response = self.client.post(f"/api/candidatos/{candidate_id}/aprobar", json={
                 "fecha_hora_entrevista": appointment.isoformat(), "duracion_minutos": 45,
                 "modalidad": "Videollamada", "sesion": "spoofed-session", "confirmar_envio_real": False,
@@ -175,7 +175,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(interviews[0]["modo"], "simulacion")
         self.assertEqual(self.client.get(f"/api/candidatos/{candidate_id}").json()["estado"], "ENTREVISTA_PROGRAMADA")
 
-        with patch("backend.main.google_services", google):
+        with patch("backend.main.RecruiterGoogle", return_value=google):
             repeated = self.client.post(f"/api/candidatos/{candidate_id}/aprobar", json={
                 "fecha_hora_entrevista": appointment.isoformat(),
             })
@@ -187,7 +187,7 @@ class WorkflowTests(unittest.TestCase):
         google = Mock()
         google.modo = "real"
         future = datetime.now(timezone.utc) + timedelta(days=1)
-        with patch("backend.main.google_services", google):
+        with patch("backend.main.RecruiterGoogle", return_value=google):
             unconfirmed = self.client.post(f"/api/candidatos/{candidate_id}/aprobar", json={
                 "fecha_hora_entrevista": future.isoformat(),
             })
@@ -209,7 +209,7 @@ class WorkflowTests(unittest.TestCase):
             "evento_id": "synthetic-event", "enlace_evento": "", "mensaje": "Fallo del correo de prueba.",
             "payload": {},
         }
-        with patch("backend.main.google_services", google):
+        with patch("backend.main.RecruiterGoogle", return_value=google):
             response = self.client.post(f"/api/candidatos/{candidate_id}/aprobar", json={
                 "fecha_hora_entrevista": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
                 "confirmar_envio_real": True,
