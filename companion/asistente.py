@@ -38,19 +38,31 @@ def lmstudio(path, data=None, timeout=600):
         headers={'Content-Type': 'application/json'})
     return urllib.request.urlopen(request, timeout=timeout)
 
-def lm_model():
+def lm_details():
     try:
-        with lmstudio('models', timeout=3) as r:
-            names = [m['id'] for m in json.load(r).get('data', [])]
-        return next((n for n in names if n == 'qwen3.5-2b'), None)
+        with urllib.request.urlopen('http://127.0.0.1:1234/api/v1/models', timeout=3) as r:
+            models = json.load(r).get('models', [])
+        loaded = [(m, i) for m in models if m.get('type') == 'llm' for i in m.get('loaded_instances', [])]
+        preferred = os.environ.get('LM_STUDIO_MODEL', '')
+        if preferred:
+            loaded = [(m, i) for m, i in loaded if preferred in {m.get('key'), i.get('id')}]
+        if not loaded:
+            return None
+        m, instance = loaded[0]
+        return {'id': instance['id'], 'reasoning_off': 'off' in m.get('capabilities', {}).get('reasoning', {}).get('allowed_options', [])}
     except Exception:
         return None
+
+
+def lm_model():
+    model = lm_details()
+    return model['id'] if model else None
 
 def pull():
     try:
         local_model = lm_model()
         if local_model:
-            progress.update(status='Qwen disponible en LM Studio. No necesita otra descarga.', completed=1, total=1, error=False)
+            progress.update(status='Modelo disponible en LM Studio. No necesita otra descarga.', completed=1, total=1, error=False)
             return
         with ollama('tags', timeout=5) as r:
             names = [m['name'] for m in json.load(r).get('models', [])]
@@ -104,14 +116,14 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {}); return
         local_model = lm_model()
         if local_model:
-            self.respond(200, {**progress, 'ready': True, 'model': local_model, 'provider': 'LM Studio', 'status': 'Qwen disponible en LM Studio.'})
+            self.respond(200, {**progress, 'ready': True, 'model': local_model, 'provider': 'LM Studio', 'status': 'Modelo disponible en LM Studio.'})
             return
         try:
             with ollama('tags', timeout=5) as r:
                 ready = MODEL in [m['name'] for m in json.load(r).get('models', [])]
             self.respond(200, {**progress, 'ready': ready, 'model': MODEL})
         except Exception:
-            self.respond(200, {**progress, 'ready': False, 'model': MODEL, 'status': 'Abre Ollama para continuar.'})
+            self.respond(200, {**progress, 'ready': False, 'model': MODEL, 'status': 'Carga un modelo de conversación en LM Studio y activa su servidor local (puerto 1234).'})
 
     def do_POST(self):
         if not self.authenticated():
@@ -129,13 +141,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, progress)
             elif self.path == '/chat':
                 with inference:
-                    local_model = lm_model()
+                    details = lm_details()
+                    local_model = details['id'] if details else None
                     if local_model:
                         started = time.monotonic()
                         with lmstudio('chat/completions', {'model': local_model, 'messages': data['messages'],
                                 'response_format': {'type': 'json_schema', 'json_schema': {'name': 'talentia', 'strict': True, 'schema': data['format']}},
                                 'stream': False, 'temperature': 0.1, 'max_tokens': 4096,
-                                'reasoning': 'off', 'reasoning_effort': 'none'}) as r:
+                                **({'reasoning': 'off', 'reasoning_effort': 'none'} if details['reasoning_off'] else {})}) as r:
                             result = json.load(r)
                         if not result['choices'][0]['message'].get('content'):
                             raise ValueError('LM Studio devolvió una respuesta vacía. Desactiva Thinking para este modelo y vuelve a intentar.')

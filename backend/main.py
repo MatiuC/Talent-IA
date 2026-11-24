@@ -809,6 +809,7 @@ from backend.schemas import EvaluacionCV
 from backend.llm_agent import SYSTEM_PROMPT, construir_prompt_usuario
 
 class LocalEvaluation(BaseModel):
+    modelo: str = Field(default="modelo local (cliente)", max_length=200)
     evaluacion: Optional[EvaluacionCV] = None
     error: str = Field(default="", max_length=1000)
     latencia: float = Field(default=0, ge=0, le=86400)
@@ -858,7 +859,7 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
     if ev:
         await asyncio.to_thread(db.guardar_evaluacion, candidato_id, candidate['vacante_id'], ev.anios_experiencia,
             ev.habilidades_detectadas, ev.puntaje, ev.cumple_minimos, ev.justificacion_evidencia,
-            'qwen3.5:2b (cliente)', body.latencia, body.throughput)
+            body.modelo, body.latencia, body.throughput)
         await asyncio.to_thread(db.actualizar_candidato, candidato_id, nombre_candidato=ev.nombre_candidato,
             email=ev.email, email_valido=email_es_valido(ev.email), estado=ESTADO_PENDIENTE,
             detalle='Evaluación ejecutada en el computador del cliente; pendiente de revisión humana.')
@@ -866,7 +867,7 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
         await asyncio.to_thread(db.actualizar_candidato, candidato_id, estado=ESTADO_ERROR, detalle=body.error)
     await asyncio.to_thread(db.registrar_metrica, f"usuario-{request.state.user['id']}", candidate['archivo_cv'],
         body.latencia, body.throughput, 0, 0, 'EXITO' if ev else 'ERROR', body.error,
-        candidate['vacante_id'], candidato_id, 0, 'qwen3.5:2b (cliente)')
+        candidate['vacante_id'], candidato_id, 0, body.modelo)
     return {'ok': True}
 
 

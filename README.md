@@ -4,7 +4,7 @@ Web de selección de personal con cuentas, vacantes, carga de hasta 100 PDF, eva
 
 ## Requisitos
 - Python 3.12 o superior y Git.
-- LM Studio con `qwen3.5-2b` descargado. Activa su servidor local en `http://127.0.0.1:1234` y carga el modelo. El identificador debe ser `qwen3.5-2b`.
+- LM Studio 0.4 o superior con un modelo de conversación descargado (por ejemplo, Gemma o Qwen). Activa su servidor local en `http://127.0.0.1:1234` y carga el modelo. El asistente detecta el modelo cargado.
 - Memoria suficiente para el modelo y conexión solo para las descargas iniciales.
 
 ## Windows: iniciar la prueba
@@ -75,3 +75,12 @@ Para publicar el backend en Internet, consulta ARQUITECTURA-CLIENTE.md. GitHub a
 ## Google Calendar y Gmail opcionales
 
 Cada reclutador puede conectar su propia cuenta desde Configuración. Sigue [GOOGLE.md](GOOGLE.md) para configurar el cliente OAuth de Google Cloud. La integración requiere consentimiento y confirmación de cada entrevista; sin conectar Google se conserva el modo simulación. Usa cuentas TalentIA individuales, no la cuenta pública compartida, para conexiones personales.
+
+
+## Otros modelos en LM Studio
+
+El asistente detecta el primer modelo de conversación cargado en LM Studio 0.4 o superior: Gemma, Qwen u otro compatible con respuestas JSON estructuradas. Los modelos de embeddings no sirven para evaluar CV. Carga solo el modelo que quieras usar; si tienes varios cargados puedes elegir su identificador con la variable de entorno `LM_STUDIO_MODEL` antes de iniciar el asistente.
+
+La clave de vinculación de TalentIA es independiente del modelo y se conserva al cambiarlo. Inicia `Iniciar-LMStudio.ps1` (dentro de companion si usas el repositorio) y abre http://127.0.0.1:11435. El iniciador abre el asistente aunque falte cargar el modelo. Comprueba en Configuración qué modelo está listo.
+
+La compatibilidad y calidad dependen del modelo y de la memoria disponible: no todos admiten el formato JSON requerido. El servidor de LM Studio debe estar activo en 127.0.0.1:1234, sin autenticación API adicional para esta configuración.

@@ -5,10 +5,10 @@ if (-not $pythonCommand) { throw 'Instala Python 3 desde python.org y vuelve a a
 $ollamaExecutable = Join-Path $env:LOCALAPPDATA 'Programs/Ollama/ollama.exe'
 $lmStudioReady = $false
 try {
-    $lmModels = Invoke-RestMethod -Uri 'http://127.0.0.1:1234/v1/models' -TimeoutSec 3
-    $lmStudioReady = @($lmModels.data | Where-Object id -eq 'qwen3.5-2b').Count -gt 0
+    $lmModels = Invoke-RestMethod -Uri 'http://127.0.0.1:1234/api/v1/models' -TimeoutSec 3
+    $lmStudioReady = @($lmModels.models | Where-Object { $_.type -eq 'llm' -and $_.loaded_instances.Count -gt 0 }).Count -gt 0
 } catch { }
-if ($lmStudioReady) { Write-Host 'Qwen ya esta disponible en LM Studio. Se reutilizara sin descargar Ollama.' }
+if ($lmStudioReady) { Write-Host 'Un modelo ya esta disponible en LM Studio. Se reutilizara sin descargar Ollama.' }
 if (-not $lmStudioReady -and -not (Test-Path -LiteralPath $ollamaExecutable)) {
     $installer = Join-Path $PSScriptRoot 'OllamaSetup.exe'
     Write-Host 'Descargando el instalador oficial de Ollama...'

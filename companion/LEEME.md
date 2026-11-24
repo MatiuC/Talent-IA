@@ -26,3 +26,12 @@ El navegador puede solicitar permiso para acceder a la red local. Debes permitir
 Los PDF y los resultados se guardan en el servidor de TalentIA; la inferencia ocurre en tu computador. No se promete que los CV nunca salgan del equipo. No hay envío de prompts a servicios de IA en la nube.
 
 No borres la carpeta .ollama/models de tu usuario si quieres conservar el modelo. En Windows la clave se conserva en %LOCALAPPDATA%/TalentIA/companion-key. Este primer instalador está orientado a Windows; macOS/Linux requieren instalar Ollama y ejecutar asistente.py manualmente.
+
+
+## Otros modelos en LM Studio
+
+El asistente detecta el primer modelo de conversación cargado en LM Studio 0.4 o superior: Gemma, Qwen u otro compatible con respuestas JSON estructuradas. Los modelos de embeddings no sirven para evaluar CV. Carga solo el modelo que quieras usar; si tienes varios cargados puedes elegir su identificador con la variable de entorno `LM_STUDIO_MODEL` antes de iniciar el asistente.
+
+La clave de vinculación de TalentIA es independiente del modelo y se conserva al cambiarlo. Inicia `Iniciar-LMStudio.ps1` (dentro de companion si usas el repositorio) y abre http://127.0.0.1:11435. El iniciador abre el asistente aunque falte cargar el modelo. Comprueba en Configuración qué modelo está listo.
+
+La compatibilidad y calidad dependen del modelo y de la memoria disponible: no todos admiten el formato JSON requerido. El servidor de LM Studio debe estar activo en 127.0.0.1:1234, sin autenticación API adicional para esta configuración.
