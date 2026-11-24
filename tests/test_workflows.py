@@ -242,6 +242,68 @@ class WorkflowTests(unittest.TestCase):
         oversized = self.client.post(f"/api/vacantes/{vacancy_id}/preparar-local", files=[("archivos", (f"{n}.pdf", b"x", "application/pdf")) for n in range(101)])
         self.assertEqual(oversized.status_code, 400)
 
+    def test_pending_summary_and_error_retry_without_duplicates(self):
+        vacancy_id = self.vacancy()
+        pdf = self.pdf("Candidate Retry. Experience with Python SQL and reporting for two years.")
+        prep = self.client.post(
+            f"/api/vacantes/{vacancy_id}/preparar-local",
+            files=[
+                ("archivos", ("ok.pdf", pdf, "application/pdf")),
+                ("archivos", ("retry.pdf", pdf, "application/pdf")),
+            ],
+        )
+        self.assertEqual(prep.status_code, 200, prep.text)
+        job_ok, job_err = prep.json()["jobs"]
+
+        res = self.client.get("/api/pendientes-local/resumen")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["total_pendientes"], 2)
+        self.assertEqual(res.json()["vacantes"][0]["analizando"], 2)
+        self.assertEqual(res.json()["vacantes"][0]["errores"], 0)
+
+        evaluation, _ = self.evaluation()
+        self.assertEqual(
+            self.client.post(
+                f"/api/candidatos/{job_ok['id']}/resultado-local",
+                json={"evaluacion": evaluation.model_dump(), "modelo": "qwen3.5-2b", "latencia": 1.5},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/api/candidatos/{job_err['id']}/resultado-local",
+                json={"error": "Timeout simulado", "latencia": 2.0},
+            ).status_code,
+            200,
+        )
+
+        # Summary reflects 1 remaining error for this user; another user sees 0.
+        res_after_err = self.client.get("/api/pendientes-local/resumen").json()
+        self.assertEqual(res_after_err["total_pendientes"], 1)
+        self.assertEqual(res_after_err["vacantes"][0]["errores"], 1)
+
+        other = {"name": "Other Recruiter", "email": "other@example.test", "password": "test-password-123"}
+        self.assertEqual(self.client.post("/api/auth/users", json=other).status_code, 201)
+        other_client = self.new_client()
+        self.assertEqual(other_client.post("/api/auth/login", json=other).status_code, 200)
+        self.assertEqual(other_client.get("/api/pendientes-local/resumen").json()["total_pendientes"], 0)
+        other_client.close()
+
+        # Retrying via /pendientes-local returns only job_err and updates the same candidate id.
+        pending = self.client.get(f"/api/vacantes/{vacancy_id}/pendientes-local").json()["jobs"]
+        self.assertEqual([j["id"] for j in pending], [job_err["id"]])
+        self.assertEqual(
+            self.client.post(
+                f"/api/candidatos/{job_err['id']}/resultado-local",
+                json={"evaluacion": evaluation.model_dump(), "modelo": "qwen3.5-2b", "latencia": 1.2},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(self.client.get("/api/pendientes-local/resumen").json()["total_pendientes"], 0)
+        candidates = self.client.get("/api/candidatos").json()
+        self.assertEqual([c["id"] for c in candidates], [job_ok["id"], job_err["id"]])
+        self.assertTrue(all(c["estado"] == "PENDIENTE_REVISION" for c in candidates))
+
     def test_three_authenticated_users_can_write_concurrently(self):
         accounts = [self.admin]
         for n in (2, 3):

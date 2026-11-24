@@ -905,3 +905,30 @@ async def pendientes_local(vacante_id: int, request: Request):
                 {'role': 'user', 'content': construir_prompt_usuario(recortar_para_llm(extraction.texto), vacante['titulo'], vacante['descripcion'], vacante['habilidades_obligatorias'], vacante['anios_experiencia_min'])}],
             'format': EvaluacionCV.model_json_schema()})
     return {'jobs': jobs}
+
+
+@app.get('/api/pendientes-local/resumen')
+async def resumen_pendientes_local(request: Request):
+    def consultar():
+        with db.conexion() as conn:
+            rows = conn.execute(
+                "SELECT c.vacante_id, v.titulo, "
+                "SUM(CASE WHEN c.estado='ANALIZANDO' THEN 1 ELSE 0 END) AS analizando, "
+                "SUM(CASE WHEN c.estado='ERROR_PROCESAMIENTO' THEN 1 ELSE 0 END) AS errores "
+                "FROM candidatos c JOIN vacantes v ON v.id=c.vacante_id "
+                "WHERE c.sesion=? AND v.activa=1 AND c.estado IN ('ANALIZANDO','ERROR_PROCESAMIENTO') "
+                "GROUP BY c.vacante_id, v.titulo ORDER BY c.vacante_id",
+                (f"usuario-{request.state.user['id']}",),
+            ).fetchall()
+            return [
+                {
+                    'vacante_id': r['vacante_id'],
+                    'titulo': r['titulo'],
+                    'analizando': int(r['analizando'] or 0),
+                    'errores': int(r['errores'] or 0),
+                    'pendientes': int((r['analizando'] or 0) + (r['errores'] or 0)),
+                }
+                for r in rows
+            ]
+    items = await asyncio.to_thread(consultar)
+    return {'vacantes': items, 'total_pendientes': sum(i['pendientes'] for i in items)}

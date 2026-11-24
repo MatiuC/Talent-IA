@@ -236,6 +236,8 @@ def install_auth(app: FastAPI) -> None:
         response = await call_next(request)
         if is_api or is_docs or path == "":
             response.headers["Cache-Control"] = "no-store"
+        elif path.startswith("/assets/") and path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
