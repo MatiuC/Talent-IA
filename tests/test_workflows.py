@@ -380,6 +380,64 @@ class WorkflowTests(unittest.TestCase):
         for client in workers:
             client.close()
 
+    def test_recruiter_isolation_and_leader_global_visibility(self):
+        rec2_account = {"name": "Recruiter 2", "email": "rec2@example.test", "password": "test-password-123"}
+        rec3_account = {"name": "Recruiter 3", "email": "rec3@example.test", "password": "test-password-123"}
+        self.assertEqual(self.client.post("/api/auth/users", json=rec2_account).status_code, 201)
+        self.assertEqual(self.client.post("/api/auth/users", json=rec3_account).status_code, 201)
+
+        rec2 = self.new_client()
+        rec3 = self.new_client()
+        self.assertEqual(rec2.post("/api/auth/login", json=rec2_account).status_code, 200)
+        self.assertEqual(rec3.post("/api/auth/login", json=rec3_account).status_code, 200)
+
+        vacancy_id = self.vacancy()
+        pdf = self.pdf("Candidate Isolation. Experience with Python SQL and FastAPI for three years.")
+        evaluation, _ = self.evaluation()
+
+        prep2 = rec2.post(f"/api/vacantes/{vacancy_id}/preparar-local", files=[("archivos", ("cv_rec2.pdf", pdf, "application/pdf"))])
+        prep3 = rec3.post(f"/api/vacantes/{vacancy_id}/preparar-local", files=[("archivos", ("cv_rec3.pdf", pdf, "application/pdf"))])
+        self.assertEqual(prep2.status_code, 200)
+        self.assertEqual(prep3.status_code, 200)
+        cid2 = prep2.json()["jobs"][0]["id"]
+        cid3 = prep3.json()["jobs"][0]["id"]
+
+        self.assertEqual(
+            rec2.post(f"/api/candidatos/{cid2}/resultado-local", json={"evaluacion": evaluation.model_dump(), "latencia": 1.1, "tokens": 90}).status_code,
+            200,
+        )
+        self.assertEqual(
+            rec3.post(f"/api/candidatos/{cid3}/resultado-local", json={"evaluacion": evaluation.model_dump(), "latencia": 1.2, "tokens": 95}).status_code,
+            200,
+        )
+
+        # Recruiter 2 sees only cid2 and gets 403 on cid3
+        self.assertEqual([c["id"] for c in rec2.get("/api/candidatos").json()], [cid2])
+        self.assertEqual([c["id"] for c in rec2.get(f"/api/vacantes/{vacancy_id}/ranking").json()], [cid2])
+        self.assertEqual(rec2.get("/api/vacantes").json()[0]["total_candidatos"], 1)
+        self.assertEqual(rec2.get("/api/metricas/resumen").json()["total_cvs_procesados"], 1)
+        self.assertEqual(rec2.get("/api/metricas/resumen").json()["sesiones_activas"], 1)
+        self.assertEqual(len(rec2.get("/api/metricas").json()), 1)
+        self.assertEqual(rec2.get(f"/api/candidatos/{cid3}").status_code, 403)
+        self.assertEqual(rec2.get(f"/api/candidatos/{cid3}/pdf").status_code, 403)
+        self.assertEqual(rec2.post(f"/api/candidatos/{cid3}/rechazar", json={"motivo": "No autorizado"}).status_code, 403)
+        future = (datetime.now(timezone(timedelta(hours=-5))) + timedelta(days=2)).isoformat()
+        self.assertEqual(rec2.post(f"/api/candidatos/{cid3}/aprobar", json={"fecha_hora_entrevista": future}).status_code, 403)
+
+        # Recruiter 3 sees only cid3 and gets 403 on cid2
+        self.assertEqual([c["id"] for c in rec3.get("/api/candidatos").json()], [cid3])
+        self.assertEqual(rec3.get(f"/api/candidatos/{cid2}").status_code, 403)
+
+        # Leader (admin) sees both cid2 and cid3, their PDFs, metrics, and can manage both
+        self.assertEqual([c["id"] for c in self.client.get("/api/candidatos").json()], [cid2, cid3])
+        self.assertEqual(self.client.get("/api/vacantes").json()[0]["total_candidatos"], 2)
+        self.assertEqual(self.client.get(f"/api/candidatos/{cid2}/pdf").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/candidatos/{cid3}/pdf").status_code, 200)
+        self.assertEqual(self.client.get("/api/metricas/resumen").json()["sesiones_activas"], 2)
+        self.assertEqual(self.client.get("/api/metricas/resumen").json()["total_cvs_procesados"], 2)
+        self.assertEqual(self.client.post(f"/api/candidatos/{cid2}/rechazar", json={"motivo": "Revisado por líder"}).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/candidatos/{cid2}").json()["estado"], "RECHAZADO")
+
 
 if __name__ == "__main__":
     unittest.main()

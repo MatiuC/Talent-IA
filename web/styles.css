@@ -51,3 +51,40 @@ dialog{border:1px solid var(--line);border-radius:15px;padding:0;width:min(560px
 .status-cell{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
 .btn-discard-inline{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:5px;background:#fcedeb;color:#a5483f;border:1px solid #f2cfc9;font-size:10px;font-weight:650;white-space:nowrap;line-height:1.2;transition:background .15s,border-color .15s,color .15s}
 .btn-discard-inline:hover{background:#f8deda;border-color:#e4b3ab;color:#8c352d}
+.sidebar-backdrop{display:none}
+@media(max-width:1040px){
+ :root{--nav:0px}
+ .sidebar{width:240px;transform:translateX(-100%);transition:transform .2s;box-shadow:15px 0 30px #153b391a;overflow-y:auto}
+ .sidebar.open{transform:translateX(0)}
+ body.nav-open .sidebar-backdrop{display:block;position:fixed;inset:0;background:#102b3545;z-index:25}
+ .app-main{margin-left:0}
+ .mobile-menu{display:inline-flex;border:0;background:none;margin-left:-4px}
+ .topbar{height:56px;padding:0 16px;gap:10px}
+ .date-label{display:none}
+ .content{padding:18px 16px 20px}
+ .dashboard-grid,.metrics-grid,.setting-grid,.detail-grid,.upload-layout,.calendar-layout{grid-template-columns:1fr}
+ .vacancy-grid{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+ .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+ .page-heading{flex-wrap:wrap;align-items:flex-start;gap:10px;margin-bottom:16px}
+ .heading-actions{flex-wrap:wrap}
+ .heading-actions .btn-secondary{display:inline-flex}
+ .hero-art{display:none}
+ .hero-copy{max-width:100%}
+ .hero{min-height:auto;padding:20px}
+ td,th{padding:11px 12px}
+ .cell-name{max-width:190px}
+ dialog{max-height:calc(100vh - 20px);overflow:auto}
+}
+@media(max-width:640px){
+ .search-box{display:none}
+ .content{padding:14px 12px 18px}
+ .page-heading h1{font-size:21px}
+ .panel-header{padding:14px;flex-wrap:wrap}
+ .panel-body{padding:0 14px 14px}
+ .filters{gap:8px}
+ .filters .filter-input{width:100%;min-width:0}
+ .analysis-floating{top:8px;right:8px;width:min(276px,calc(100vw - 16px));padding:10px 12px;font-size:11px}
+ .status-cell{gap:6px}
+ .calendar-grid{min-width:520px}
+ .calendar-day{min-height:76px}
+}

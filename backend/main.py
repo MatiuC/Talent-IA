@@ -19,6 +19,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
+import subprocess
+import sys
 import time
 import unicodedata
 import uuid
@@ -78,27 +81,109 @@ logging.basicConfig(
 logger = logging.getLogger("talentia.api")
 
 # ---------------------------------------------------------------------------
-# Muestreo de recursos del sistema (psutil)
+# Muestreo de recursos del sistema (psutil + NVIDIA GPU)
 # ---------------------------------------------------------------------------
-_recursos: Dict[str, float] = {"cpu": 0.0, "ram": 0.0}
+_recursos: Dict[str, Any] = {
+    "cpu": 0.0,
+    "ram": 0.0,
+    "gpu": None,
+    "gpu_mem_pct": None,
+    "gpu_mem_used_mb": None,
+    "gpu_mem_total_mb": None,
+    "gpu_nombre": "",
+}
 _tarea_monitor: Optional[asyncio.Task] = None
 
 
+def _muestrear_gpu() -> Dict[str, Any]:
+    """Lee utilizacion y VRAM de la GPU NVIDIA mediante nvidia-smi si esta disponible."""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return {}
+    try:
+        proc = subprocess.run(
+            [exe, "--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0),
+        )
+        if proc.returncode != 0:
+            return {}
+        line = next((row.strip() for row in proc.stdout.splitlines() if row.strip()), "")
+        if not line:
+            return {}
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 4:
+            return {}
+        name = parts[0]
+        util = float(parts[1])
+        used_mb = int(float(parts[2]))
+        total_mb = int(float(parts[3]))
+        mem_pct = round((used_mb / total_mb) * 100.0, 1) if total_mb > 0 else None
+        return {
+            "gpu": round(util, 1),
+            "gpu_mem_pct": mem_pct,
+            "gpu_mem_used_mb": used_mb,
+            "gpu_mem_total_mb": total_mb,
+            "gpu_nombre": name,
+        }
+    except Exception:
+        return {}
+
+
 async def _monitorear_recursos(intervalo: float = 1.0) -> None:
-    """Muestrea CPU y RAM en segundo plano sin bloquear el event loop."""
+    """Muestrea CPU, RAM y GPU en segundo plano sin bloquear el event loop."""
     psutil.cpu_percent(interval=None)  # primera llamada: establece la linea base
+    tick = 0
     while True:
         try:
             _recursos["cpu"] = float(psutil.cpu_percent(interval=None))
             _recursos["ram"] = float(psutil.virtual_memory().percent)
+            if tick % 2 == 0:
+                gpu_info = await asyncio.to_thread(_muestrear_gpu)
+                if gpu_info:
+                    _recursos.update(gpu_info)
+                else:
+                    _recursos.update(gpu=None, gpu_mem_pct=None, gpu_mem_used_mb=None, gpu_mem_total_mb=None, gpu_nombre="")
         except Exception as exc:  # pragma: no cover
             logger.debug("Fallo el muestreo de recursos: %s", exc)
+        tick += 1
         await asyncio.sleep(intervalo)
 
 
 def capturar_recursos() -> tuple[float, float]:
     """Ultimo valor muestreado de CPU y RAM."""
-    return _recursos["cpu"], _recursos["ram"]
+    return float(_recursos["cpu"]), float(_recursos["ram"])
+
+
+def capturar_gpu() -> Dict[str, Any]:
+    """Ultima telemetria muestreada de la GPU local."""
+    return {
+        "gpu": _recursos.get("gpu"),
+        "gpu_mem_pct": _recursos.get("gpu_mem_pct"),
+        "gpu_mem_used_mb": _recursos.get("gpu_mem_used_mb"),
+        "gpu_mem_total_mb": _recursos.get("gpu_mem_total_mb"),
+        "gpu_nombre": _recursos.get("gpu_nombre") or "",
+    }
+
+
+def _es_lider(request: Request) -> bool:
+    return request.state.user.get("role") == "admin"
+
+
+def _owner_filter(request: Request) -> Optional[int]:
+    return None if _es_lider(request) else int(request.state.user["id"])
+
+
+async def _verificar_acceso_candidato(candidato_id: int, request: Request) -> None:
+    if _es_lider(request):
+        return
+    autorizado = await asyncio.to_thread(
+        db.candidato_pertenece_a, candidato_id, int(request.state.user["id"])
+    )
+    if not autorizado:
+        raise HTTPException(403, "Solo puedes ver o gestionar los currículums que tú has subido.")
 
 
 # ---------------------------------------------------------------------------
@@ -261,21 +346,23 @@ async def crear_vacante(vacante: VacanteCreate) -> VacanteOut:
 
 
 @app.get("/api/vacantes", response_model=List[VacanteOut], tags=["Vacantes"])
-async def listar_vacantes() -> List[VacanteOut]:
-    registros = await asyncio.to_thread(db.listar_vacantes)
+async def listar_vacantes(request: Request) -> List[VacanteOut]:
+    registros = await asyncio.to_thread(db.listar_vacantes, _owner_filter(request))
     return [VacanteOut(**registro) for registro in registros]
 
 
 @app.get("/api/vacantes/{vacante_id}", response_model=VacanteOut, tags=["Vacantes"])
-async def obtener_vacante(vacante_id: int) -> VacanteOut:
-    registro = await asyncio.to_thread(db.obtener_vacante, vacante_id)
+async def obtener_vacante(vacante_id: int, request: Request) -> VacanteOut:
+    registro = await asyncio.to_thread(db.obtener_vacante, vacante_id, _owner_filter(request))
     if registro is None:
         raise HTTPException(status_code=404, detail=f"No existe la vacante {vacante_id}.")
     return VacanteOut(**registro)
 
 
 @app.delete("/api/vacantes/{vacante_id}", tags=["Vacantes"])
-async def eliminar_vacante(vacante_id: int) -> Dict[str, Any]:
+async def eliminar_vacante(vacante_id: int, request: Request) -> Dict[str, Any]:
+    if not _es_lider(request):
+        raise HTTPException(403, "Solo el reclutador líder puede eliminar vacantes.")
     eliminada = await asyncio.to_thread(db.eliminar_vacante, vacante_id)
     if not eliminada:
         raise HTTPException(status_code=404, detail=f"No existe la vacante {vacante_id}.")
@@ -432,6 +519,7 @@ async def _procesar_cv(
     finally:
         latencia_final = time.perf_counter() - inicio
         cpu, ram = capturar_recursos()
+        gpu_pct = capturar_gpu().get("gpu")
         try:
             await asyncio.to_thread(
                 db.registrar_metrica,
@@ -447,6 +535,7 @@ async def _procesar_cv(
                 candidato_id,
                 tokens,
                 settings.ollama_model,
+                gpu_pct,
             )
         except Exception:  # pragma: no cover
             logger.exception("No se pudo registrar la metrica de %s", nombre_archivo)
@@ -545,27 +634,34 @@ async def analizar_lote(
 )
 async def obtener_ranking(
     vacante_id: int,
+    request: Request,
     estado: Optional[str] = Query(default=None, description="Filtra por estado del candidato"),
 ) -> List[CandidatoEvaluado]:
-    vacante = await asyncio.to_thread(db.obtener_vacante, vacante_id)
+    owner_id = _owner_filter(request)
+    vacante = await asyncio.to_thread(db.obtener_vacante, vacante_id, owner_id)
     if vacante is None:
         raise HTTPException(status_code=404, detail=f"No existe la vacante {vacante_id}.")
-    registros = await asyncio.to_thread(db.obtener_ranking, vacante_id)
+    registros = await asyncio.to_thread(db.obtener_ranking, vacante_id, owner_id)
     if estado:
         registros = [r for r in registros if r["estado"] == estado]
     return [_a_candidato_evaluado(registro) for registro in registros]
 
 
 @app.get("/api/candidatos", response_model=List[CandidatoEvaluado], tags=["Candidatos"])
-async def listar_candidatos() -> List[CandidatoEvaluado]:
+async def listar_candidatos(request: Request) -> List[CandidatoEvaluado]:
+    owner_id = _owner_filter(request)
     def todos():
-        return [registro for vacante in db.listar_vacantes() for registro in db.obtener_ranking(vacante["id"])]
+        return [
+            registro
+            for vacante in db.listar_vacantes(owner_id)
+            for registro in db.obtener_ranking(vacante["id"], owner_id)
+        ]
     registros = await asyncio.to_thread(todos)
     return [_a_candidato_evaluado(registro) for registro in registros]
 
 
 @app.get("/api/candidatos/{candidato_id}/pdf", tags=["Candidatos"])
-async def descargar_cv(candidato_id: int) -> FileResponse:
+async def descargar_cv(candidato_id: int, request: Request) -> FileResponse:
     def buscar_archivo():
         with db.conexion() as conn:
             row = conn.execute("SELECT ruta_archivo,archivo_cv FROM candidatos WHERE id=?", (candidato_id,)).fetchone()
@@ -573,6 +669,7 @@ async def descargar_cv(candidato_id: int) -> FileResponse:
     registro = await asyncio.to_thread(buscar_archivo)
     if not registro:
         raise HTTPException(404, "No se encontró el candidato.")
+    await _verificar_acceso_candidato(candidato_id, request)
     path = Path(registro["ruta_archivo"]).resolve()
     if not path.is_relative_to(settings.uploads_dir.resolve()) or not path.is_file() or path.suffix.lower() != ".pdf":
         raise HTTPException(404, "El archivo original no está disponible.")
@@ -581,10 +678,11 @@ async def descargar_cv(candidato_id: int) -> FileResponse:
 
 
 @app.get("/api/candidatos/{candidato_id}", response_model=CandidatoEvaluado, tags=["Candidatos"])
-async def obtener_candidato(candidato_id: int) -> CandidatoEvaluado:
+async def obtener_candidato(candidato_id: int, request: Request) -> CandidatoEvaluado:
     registro = await asyncio.to_thread(db.obtener_candidato, candidato_id)
     if registro is None:
         raise HTTPException(status_code=404, detail=f"No existe el candidato {candidato_id}.")
+    await _verificar_acceso_candidato(candidato_id, request)
     return _a_candidato_evaluado(registro)
 
 
@@ -607,6 +705,7 @@ async def aprobar_candidato(
     candidato = await asyncio.to_thread(db.obtener_candidato, candidato_id)
     if candidato is None:
         raise HTTPException(status_code=404, detail=f"No existe el candidato {candidato_id}.")
+    await _verificar_acceso_candidato(candidato_id, request)
 
     vacante = await asyncio.to_thread(db.obtener_vacante, candidato["vacante_id"])
     if vacante is None:  # pragma: no cover
@@ -730,6 +829,7 @@ async def rechazar_candidato(candidato_id: int, solicitud: RechazoRequest, reque
     candidato = await asyncio.to_thread(db.obtener_candidato, candidato_id)
     if candidato is None:
         raise HTTPException(status_code=404, detail=f"No existe el candidato {candidato_id}.")
+    await _verificar_acceso_candidato(candidato_id, request)
 
     detalle = solicitud.motivo.strip() or "Descartado por el reclutador."
     await asyncio.to_thread(
@@ -743,8 +843,8 @@ async def rechazar_candidato(candidato_id: int, solicitud: RechazoRequest, reque
 
 
 @app.get("/api/entrevistas", tags=["Fase 2 - Entrevistas"])
-async def listar_entrevistas(vacante_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    return await asyncio.to_thread(db.listar_entrevistas, vacante_id)
+async def listar_entrevistas(request: Request, vacante_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    return await asyncio.to_thread(db.listar_entrevistas, vacante_id, _owner_filter(request))
 
 
 # ---------------------------------------------------------------------------
@@ -752,26 +852,35 @@ async def listar_entrevistas(vacante_id: Optional[int] = None) -> List[Dict[str,
 # ---------------------------------------------------------------------------
 @app.get("/api/metricas", response_model=List[LogMetrica], tags=["Metricas"])
 async def listar_metricas(
+    request: Request,
     limite: int = Query(default=50, ge=1, le=1000),
     sesion: Optional[str] = Query(default=None),
 ) -> List[LogMetrica]:
-    registros = await asyncio.to_thread(db.listar_metricas, limite, sesion)
+    registros = await asyncio.to_thread(db.listar_metricas, limite, sesion, _owner_filter(request))
     return [LogMetrica(**registro) for registro in registros]
 
 
 @app.get("/api/metricas/resumen", response_model=ResumenMetricas, tags=["Metricas"])
-async def resumen_metricas() -> ResumenMetricas:
-    resumen = await asyncio.to_thread(db.resumen_metricas)
+async def resumen_metricas(request: Request) -> ResumenMetricas:
+    resumen = await asyncio.to_thread(db.resumen_metricas, _owner_filter(request))
     cpu, ram = capturar_recursos()
+    gpu = capturar_gpu()
     resumen["cpu_porcentaje_actual"] = cpu
     resumen["ram_porcentaje_actual"] = ram
+    resumen["gpu_porcentaje_actual"] = gpu["gpu"]
+    resumen["gpu_memoria_porcentaje"] = gpu["gpu_mem_pct"]
+    resumen["gpu_memoria_usada_mb"] = gpu["gpu_mem_used_mb"]
+    resumen["gpu_memoria_total_mb"] = gpu["gpu_mem_total_mb"]
+    resumen["gpu_nombre"] = gpu["gpu_nombre"]
     resumen["modelo"] = resumen.get("modelo") or settings.ollama_model
     return ResumenMetricas(**resumen)
 
 
 @app.delete("/api/metricas", tags=["Metricas"])
-async def limpiar_metricas() -> Dict[str, Any]:
+async def limpiar_metricas(request: Request) -> Dict[str, Any]:
     """Vacia logs_metricas. Util para dejar el tablero limpio antes de la defensa."""
+    if not _es_lider(request):
+        raise HTTPException(403, "Solo el reclutador líder puede limpiar las métricas.")
     eliminados = await asyncio.to_thread(db.limpiar_metricas)
     return {"eliminados": eliminados}
 
@@ -865,6 +974,8 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
     if not ev and not body.error:
         raise HTTPException(422, 'Falta evaluación o detalle del error.')
     cpu, ram = capturar_recursos()
+    gpu_pct = capturar_gpu().get("gpu")
+    gpu_txt = f"{gpu_pct:.1f}%" if gpu_pct is not None else "n/d"
     sesion_log = f"usuario-{request.state.user['id']}:{request.state.user['name']}"[:80]
     if ev:
         await asyncio.to_thread(db.guardar_evaluacion, candidato_id, candidate['vacante_id'], ev.anios_experiencia,
@@ -874,7 +985,7 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
             email=ev.email, email_valido=email_es_valido(ev.email), estado=ESTADO_PENDIENTE,
             detalle='Evaluación ejecutada en el computador del cliente; pendiente de revisión humana.')
         logger.info(
-            "CV %s evaluado (cliente) | sesion=%s | vacante=%s | puntaje=%s | %.2fs | %.1f tok/s | tokens=%s | cpu=%.1f%% | ram=%.1f%% | modelo=%s",
+            "CV %s evaluado (cliente) | sesion=%s | vacante=%s | puntaje=%s | %.2fs | %.1f tok/s | tokens=%s | cpu=%.1f%% | ram=%.1f%% | gpu=%s | modelo=%s",
             candidate["archivo_cv"],
             sesion_log,
             candidate["vacante_id"],
@@ -884,23 +995,25 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
             body.tokens,
             cpu,
             ram,
+            gpu_txt,
             body.modelo,
         )
     else:
         await asyncio.to_thread(db.actualizar_candidato, candidato_id, estado=ESTADO_ERROR, detalle=body.error)
         logger.warning(
-            "CV %s con error (cliente) | sesion=%s | vacante=%s | %.2fs | cpu=%.1f%% | ram=%.1f%% | detalle=%s",
+            "CV %s con error (cliente) | sesion=%s | vacante=%s | %.2fs | cpu=%.1f%% | ram=%.1f%% | gpu=%s | detalle=%s",
             candidate["archivo_cv"],
             sesion_log,
             candidate["vacante_id"],
             body.latencia,
             cpu,
             ram,
+            gpu_txt,
             body.error[:200],
         )
     await asyncio.to_thread(db.registrar_metrica, sesion_log, candidate['archivo_cv'],
         body.latencia, body.throughput, cpu, ram, 'EXITO' if ev else 'ERROR', body.error,
-        candidate['vacante_id'], candidato_id, body.tokens, body.modelo)
+        candidate['vacante_id'], candidato_id, body.tokens, body.modelo, gpu_pct)
     return {'ok': True}
 
 

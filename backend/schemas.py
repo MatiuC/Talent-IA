@@ -350,6 +350,7 @@ class LogMetrica(BaseModel):
     throughput_tokens_seg: float
     cpu_porcentaje: float
     ram_porcentaje: float
+    gpu_porcentaje: Optional[float] = None
     estado: str
     detalle: str = ""
     vacante_id: Optional[int] = None
@@ -370,6 +371,11 @@ class ResumenMetricas(BaseModel):
     tokens_generados_total: int = 0
     cpu_porcentaje_actual: float = 0.0
     ram_porcentaje_actual: float = 0.0
+    gpu_porcentaje_actual: Optional[float] = None
+    gpu_memoria_porcentaje: Optional[float] = None
+    gpu_memoria_usada_mb: Optional[int] = None
+    gpu_memoria_total_mb: Optional[int] = None
+    gpu_nombre: str = ""
     sesiones_activas: int = 0
     tasa_exito_porcentaje: float = 0.0
     modelo: str = ""

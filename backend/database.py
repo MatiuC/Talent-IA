@@ -160,6 +160,13 @@ def init_db() -> None:
         conn.executescript(ESQUEMA_SQL)
         if "activa" not in [r[1] for r in conn.execute("PRAGMA table_info(vacantes)")]:
             conn.execute("ALTER TABLE vacantes ADD COLUMN activa INTEGER NOT NULL DEFAULT 1")
+        if "gpu_porcentaje" not in [r[1] for r in conn.execute("PRAGMA table_info(logs_metricas)")]:
+            conn.execute("ALTER TABLE logs_metricas ADD COLUMN gpu_porcentaje REAL")
+
+
+def _sesion_params(owner_user_id: int) -> tuple[str, str]:
+    """Devuelve patrones para filtrar filas de un usuario ('usuario-N' y 'usuario-N:Nombre')."""
+    return (f"usuario-{owner_user_id}", f"usuario-{owner_user_id}:%")
 
 
 def base_datos_disponible() -> bool:
@@ -220,26 +227,50 @@ def _fila_a_vacante(fila: sqlite3.Row, total: int = 0) -> Dict[str, Any]:
     }
 
 
-def obtener_vacante(vacante_id: int) -> Optional[Dict[str, Any]]:
+def obtener_vacante(
+    vacante_id: int,
+    owner_user_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
     with conexion() as conn:
         fila = conn.execute("SELECT * FROM vacantes WHERE id = ?", (vacante_id,)).fetchone()
         if fila is None:
             return None
-        total = conn.execute(
-            "SELECT COUNT(*) AS n FROM candidatos WHERE vacante_id = ?", (vacante_id,)
-        ).fetchone()["n"]
+        if owner_user_id is None:
+            total = conn.execute(
+                "SELECT COUNT(*) AS n FROM candidatos WHERE vacante_id = ?", (vacante_id,)
+            ).fetchone()["n"]
+        else:
+            exact, prefix = _sesion_params(owner_user_id)
+            total = conn.execute(
+                "SELECT COUNT(*) AS n FROM candidatos WHERE vacante_id = ? AND (sesion = ? OR sesion LIKE ?)",
+                (vacante_id, exact, prefix),
+            ).fetchone()["n"]
         return _fila_a_vacante(fila, total)
 
 
-def listar_vacantes() -> List[Dict[str, Any]]:
+def listar_vacantes(owner_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with conexion() as conn:
-        filas = conn.execute(
-            """
-            SELECT v.*, (SELECT COUNT(*) FROM candidatos c WHERE c.vacante_id = v.id) AS total
-            FROM vacantes v
-            ORDER BY v.id DESC
-            """
-        ).fetchall()
+        if owner_user_id is None:
+            filas = conn.execute(
+                """
+                SELECT v.*, (SELECT COUNT(*) FROM candidatos c WHERE c.vacante_id = v.id) AS total
+                FROM vacantes v
+                ORDER BY v.id DESC
+                """
+            ).fetchall()
+        else:
+            exact, prefix = _sesion_params(owner_user_id)
+            filas = conn.execute(
+                """
+                SELECT v.*, (
+                    SELECT COUNT(*) FROM candidatos c
+                    WHERE c.vacante_id = v.id AND (c.sesion = ? OR c.sesion LIKE ?)
+                ) AS total
+                FROM vacantes v
+                ORDER BY v.id DESC
+                """,
+                (exact, prefix),
+            ).fetchall()
         return [_fila_a_vacante(fila, fila["total"]) for fila in filas]
 
 
@@ -423,11 +454,33 @@ ORDER BY (e.puntaje IS NULL) ASC,
 """
 
 
-def obtener_ranking(vacante_id: int) -> List[Dict[str, Any]]:
+def obtener_ranking(
+    vacante_id: int,
+    owner_user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """Candidatos de una vacante ordenados de mayor a menor puntaje."""
     with conexion() as conn:
-        filas = conn.execute(_SQL_RANKING, (vacante_id,)).fetchall()
+        if owner_user_id is None:
+            filas = conn.execute(_SQL_RANKING, (vacante_id,)).fetchall()
+        else:
+            exact, prefix = _sesion_params(owner_user_id)
+            consulta = _SQL_RANKING.replace(
+                "WHERE c.vacante_id = ?",
+                "WHERE c.vacante_id = ? AND (c.sesion = ? OR c.sesion LIKE ?)",
+            )
+            filas = conn.execute(consulta, (vacante_id, exact, prefix)).fetchall()
         return [_fila_a_candidato(fila) for fila in filas]
+
+
+def candidato_pertenece_a(candidato_id: int, user_id: int) -> bool:
+    """Comprueba si un candidato fue cargado por el usuario indicado."""
+    exact, _ = _sesion_params(user_id)
+    with conexion() as conn:
+        fila = conn.execute("SELECT sesion FROM candidatos WHERE id = ?", (candidato_id,)).fetchone()
+        if fila is None:
+            return False
+        sesion = str(fila["sesion"] or "")
+        return sesion == exact or sesion.startswith(f"{exact}:")
 
 
 def obtener_candidatos_por_ids(ids: List[int]) -> List[Dict[str, Any]]:
@@ -506,16 +559,26 @@ def registrar_entrevista(
         return int(cursor.lastrowid)
 
 
-def listar_entrevistas(vacante_id: Optional[int] = None) -> List[Dict[str, Any]]:
+def listar_entrevistas(
+    vacante_id: Optional[int] = None,
+    owner_user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     consulta = """
         SELECT en.*, c.nombre_candidato, c.vacante_id
         FROM entrevistas en
         JOIN candidatos c ON c.id = en.candidato_id
     """
+    filtros: List[str] = []
     parametros: List[Any] = []
     if vacante_id is not None:
-        consulta += " WHERE c.vacante_id = ?"
+        filtros.append("c.vacante_id = ?")
         parametros.append(vacante_id)
+    if owner_user_id is not None:
+        exact, prefix = _sesion_params(owner_user_id)
+        filtros.append("(c.sesion = ? OR c.sesion LIKE ?)")
+        parametros.extend([exact, prefix])
+    if filtros:
+        consulta += " WHERE " + " AND ".join(filtros)
     consulta += " ORDER BY en.id DESC"
     with conexion() as conn:
         filas = conn.execute(consulta, parametros).fetchall()
@@ -545,16 +608,18 @@ def registrar_metrica(
     candidato_id: Optional[int] = None,
     tokens_generados: int = 0,
     modelo: str = "",
+    gpu_porcentaje: Optional[float] = None,
 ) -> int:
     """Inserta una fila de auditoria en logs_metricas."""
+    gpu_val = round(float(gpu_porcentaje), 2) if gpu_porcentaje is not None else None
     with transaccion() as conn:
         cursor = conn.execute(
             """
             INSERT INTO logs_metricas
                 (timestamp, usuario_o_sesion, archivo_cv, latencia_segundos,
-                 throughput_tokens_seg, cpu_porcentaje, ram_porcentaje, estado,
-                 detalle, vacante_id, candidato_id, tokens_generados, modelo)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 throughput_tokens_seg, cpu_porcentaje, ram_porcentaje, gpu_porcentaje,
+                 estado, detalle, vacante_id, candidato_id, tokens_generados, modelo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ahora_iso(),
@@ -564,6 +629,7 @@ def registrar_metrica(
                 round(float(throughput_tokens_seg), 4),
                 round(float(cpu_porcentaje), 2),
                 round(float(ram_porcentaje), 2),
+                gpu_val,
                 estado,
                 detalle[:2000],
                 vacante_id,
@@ -575,12 +641,23 @@ def registrar_metrica(
         return int(cursor.lastrowid)
 
 
-def listar_metricas(limite: int = 100, sesion: Optional[str] = None) -> List[Dict[str, Any]]:
+def listar_metricas(
+    limite: int = 100,
+    sesion: Optional[str] = None,
+    owner_user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     consulta = "SELECT * FROM logs_metricas"
+    filtros: List[str] = []
     parametros: List[Any] = []
     if sesion:
-        consulta += " WHERE usuario_o_sesion = ?"
+        filtros.append("usuario_o_sesion = ?")
         parametros.append(sesion)
+    if owner_user_id is not None:
+        exact, prefix = _sesion_params(owner_user_id)
+        filtros.append("(usuario_o_sesion = ? OR usuario_o_sesion LIKE ?)")
+        parametros.extend([exact, prefix])
+    if filtros:
+        consulta += " WHERE " + " AND ".join(filtros)
     consulta += " ORDER BY id DESC LIMIT ?"
     parametros.append(int(limite))
     with conexion() as conn:
@@ -588,11 +665,18 @@ def listar_metricas(limite: int = 100, sesion: Optional[str] = None) -> List[Dic
         return [dict(fila) for fila in filas]
 
 
-def resumen_metricas() -> Dict[str, Any]:
+def resumen_metricas(owner_user_id: Optional[int] = None) -> Dict[str, Any]:
     """Agregados para las tarjetas KPI del dashboard."""
+    where_owner = ""
+    params_owner: List[Any] = []
+    if owner_user_id is not None:
+        exact, prefix = _sesion_params(owner_user_id)
+        where_owner = " WHERE (usuario_o_sesion = ? OR usuario_o_sesion LIKE ?)"
+        params_owner = [exact, prefix]
+
     with conexion() as conn:
         fila = conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*)                                             AS total,
                 SUM(CASE WHEN estado = 'EXITO' THEN 1 ELSE 0 END)    AS exitos,
@@ -603,10 +687,16 @@ def resumen_metricas() -> Dict[str, Any]:
                 SUM(tokens_generados)                                AS tokens,
                 COUNT(DISTINCT usuario_o_sesion)                     AS sesiones
             FROM logs_metricas
-            """
+            {where_owner}
+            """,
+            params_owner,
         ).fetchone()
+        model_filter = "modelo IS NOT NULL AND TRIM(modelo) <> ''"
+        if owner_user_id is not None:
+            model_filter += " AND (usuario_o_sesion = ? OR usuario_o_sesion LIKE ?)"
         ultimo = conn.execute(
-            "SELECT modelo FROM logs_metricas WHERE modelo IS NOT NULL AND TRIM(modelo) <> '' ORDER BY id DESC LIMIT 1"
+            f"SELECT modelo FROM logs_metricas WHERE {model_filter} ORDER BY id DESC LIMIT 1",
+            params_owner,
         ).fetchone()
 
     total = int(fila["total"] or 0)
@@ -646,6 +736,7 @@ __all__ = [
     "guardar_evaluacion",
     "actualizar_candidato",
     "obtener_ranking",
+    "candidato_pertenece_a",
     "obtener_candidato",
     "obtener_candidatos_por_ids",
     "registrar_entrevista",
