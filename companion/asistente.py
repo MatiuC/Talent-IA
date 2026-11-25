@@ -6,6 +6,7 @@ import os
 import secrets
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,7 +25,8 @@ if not key_file.exists():
 KEY = key_file.read_text(encoding='utf-8').strip()
 progress = {'running': False, 'status': 'Sin descarga activa', 'completed': 0, 'total': 0}
 lock = threading.Lock()
-inference = threading.Semaphore(1)
+MAX_CONCURRENT = max(1, min(8, int(os.environ.get('TALENTIA_CONCURRENCY', '3'))))
+inference = threading.Semaphore(MAX_CONCURRENT)
 
 def ollama(path, data=None, timeout=600):
     request = urllib.request.Request('http://127.0.0.1:11434/api/'+path,
@@ -49,7 +51,12 @@ def lm_details():
         if not loaded:
             return None
         m, instance = loaded[0]
-        return {'id': instance['id'], 'reasoning_off': 'off' in m.get('capabilities', {}).get('reasoning', {}).get('allowed_options', [])}
+        return {
+            'id': instance['id'],
+            'reasoning_off': 'off' in m.get('capabilities', {}).get('reasoning', {}).get('allowed_options', []),
+            'parallel': int(instance.get('config', {}).get('parallel') or 1),
+            'context_length': int(instance.get('config', {}).get('context_length') or 8192),
+        }
     except Exception:
         return None
 
@@ -78,6 +85,31 @@ def pull():
         progress.update(status='No se pudo preparar Qwen. Comprueba que Ollama esté abierto. '+str(exc), error=True)
     finally:
         progress['running'] = False
+
+def _fit_messages_for_slot(messages, context_length, parallel, scale=1.0):
+    """Ajusta el texto del CV al presupuesto real de tokens por ranura paralela."""
+    slots = max(1, int(parallel or 1), MAX_CONCURRENT)
+    slot_tokens = max(1024, int(context_length or 8192) // slots)
+    max_cv_chars = max(1800, int((slot_tokens - 900) * 3.5 * scale))
+    max_out_tokens = min(900, max(350, slot_tokens // 3))
+    marker_start = '<<<INICIO_CV'
+    marker_end = 'FIN_CV>>>'
+    fitted = []
+    for msg in messages:
+        content = msg.get('content', '')
+        if isinstance(content, str) and marker_start in content and marker_end in content:
+            before, rest = content.split(marker_start, 1)
+            cv_body, after = rest.split(marker_end, 1)
+            cv_clean = cv_body.strip()
+            if len(cv_clean) > max_cv_chars:
+                head_len = int(max_cv_chars * 0.7)
+                tail_len = max(0, max_cv_chars - head_len)
+                note = '\n[... sección intermedia resumida por límite de contexto ...]\n'
+                trimmed = (cv_clean[:head_len].rstrip() + note + cv_clean[-tail_len:].lstrip()) if tail_len else cv_clean[:head_len].rstrip()
+                content = f"{before}{marker_start}\n{trimmed}\n{marker_end}{after}"
+        fitted.append({**msg, 'content': content})
+    return fitted, max_out_tokens
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -116,7 +148,7 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {}); return
         local_model = lm_model()
         if local_model:
-            self.respond(200, {**progress, 'ready': True, 'model': local_model, 'provider': 'LM Studio', 'status': 'Modelo disponible en LM Studio.'})
+            self.respond(200, {**progress, 'ready': True, 'model': local_model, 'provider': 'LM Studio', 'concurrency': MAX_CONCURRENT, 'status': 'Modelo disponible en LM Studio.'})
             return
         try:
             with ollama('tags', timeout=5) as r:
@@ -145,11 +177,29 @@ class Handler(BaseHTTPRequestHandler):
                     local_model = details['id'] if details else None
                     if local_model:
                         started = time.monotonic()
-                        with lmstudio('chat/completions', {'model': local_model, 'messages': data['messages'],
-                                'response_format': {'type': 'json_schema', 'json_schema': {'name': 'talentia', 'strict': True, 'schema': data['format']}},
-                                'stream': False, 'temperature': 0.1, 'max_tokens': 4096,
-                                **({'reasoning': 'off', 'reasoning_effort': 'none'} if details['reasoning_off'] else {})}) as r:
-                            result = json.load(r)
+                        extra_reasoning = {'reasoning': 'off', 'reasoning_effort': 'none'} if details['reasoning_off'] else {}
+                        result = None
+                        for scale in (1.0, 0.65):
+                            fitted_messages, max_out = _fit_messages_for_slot(
+                                data['messages'], details['context_length'], details['parallel'], scale=scale
+                            )
+                            try:
+                                with lmstudio('chat/completions', {
+                                    'model': local_model,
+                                    'messages': fitted_messages,
+                                    'response_format': {'type': 'json_schema', 'json_schema': {'name': 'talentia', 'strict': True, 'schema': data['format']}},
+                                    'stream': False,
+                                    'temperature': 0.1,
+                                    'max_tokens': max_out,
+                                    **extra_reasoning,
+                                }) as r:
+                                    result = json.load(r)
+                                break
+                            except urllib.error.HTTPError as err:
+                                err_body = err.read().decode('utf-8', 'ignore')
+                                if scale == 1.0 and 'context size' in err_body.lower():
+                                    continue
+                                raise ValueError(f'HTTP {err.code}: {err_body.strip()[:300] or err.reason}') from err
                         if not result['choices'][0]['message'].get('content'):
                             raise ValueError('LM Studio devolvió una respuesta vacía. Desactiva Thinking para este modelo y vuelve a intentar.')
                         self.respond(200, {'message': result['choices'][0]['message'],
@@ -161,9 +211,17 @@ class Handler(BaseHTTPRequestHandler):
                         self.respond(200, json.load(r))
             else:
                 self.respond(404, {})
+        except urllib.error.HTTPError as exc:
+            detail = ''
+            try:
+                detail = exc.read().decode('utf-8', 'ignore').strip()[:300]
+            except Exception:
+                pass
+            self.respond(502, {'error': f'HTTP {exc.code}: {detail or exc.reason}'})
         except Exception as exc:
             self.respond(502, {'error': str(exc)})
 
 print('Asistente TalentIA disponible en http://127.0.0.1:11435')
 print('Web autorizada:', args.origin)
+print('Concurrencia maxima:', MAX_CONCURRENT)
 ThreadingHTTPServer(('127.0.0.1', 11435), Handler).serve_forever()
