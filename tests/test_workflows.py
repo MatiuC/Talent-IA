@@ -323,6 +323,63 @@ class WorkflowTests(unittest.TestCase):
         for client in workers:
             self.assertEqual(len(client.get("/api/vacantes").json()), 3)
 
+    def test_three_concurrent_users_client_inference_metrics_and_logs(self):
+        accounts = [self.admin]
+        for n in (2, 3):
+            account = {"name": f"Recruiter {n}", "email": f"demo{n}@example.test", "password": "test-password-123"}
+            response = self.client.post("/api/auth/users", json=account)
+            self.assertEqual(response.status_code, 201, response.text)
+            accounts.append(account)
+        workers = [self.new_client() for _ in accounts]
+        for client, account in zip(workers, accounts):
+            self.assertEqual(client.post("/api/auth/login", json=account).status_code, 200)
+
+        vacancy_ids = [
+            workers[idx].post("/api/vacantes", json={"titulo": f"Vacante demo {idx + 1}"}).json()["id"]
+            for idx in range(3)
+        ]
+        pdf = self.pdf("Candidate Concurrent. Experience with Python SQL and FastAPI for three years.")
+        evaluation, _ = self.evaluation()
+
+        def run_client_eval(idx):
+            client = workers[idx]
+            prep = client.post(
+                f"/api/vacantes/{vacancy_ids[idx]}/preparar-local",
+                files=[("archivos", (f"cv_{idx + 1}.pdf", pdf, "application/pdf"))],
+            )
+            if prep.status_code != 200:
+                return prep.status_code
+            job_id = prep.json()["jobs"][0]["id"]
+            res = client.post(
+                f"/api/candidatos/{job_id}/resultado-local",
+                json={
+                    "evaluacion": evaluation.model_dump(),
+                    "modelo": "qwen3.5-2b",
+                    "latencia": 2.5,
+                    "throughput": 24.5,
+                    "tokens": 180,
+                },
+            )
+            return res.status_code
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            statuses = list(pool.map(run_client_eval, range(3)))
+        self.assertEqual(statuses, [200, 200, 200])
+
+        resumen = self.client.get("/api/metricas/resumen").json()
+        self.assertEqual(resumen["total_cvs_procesados"], 3)
+        self.assertEqual(resumen["total_exitos"], 3)
+        self.assertEqual(resumen["sesiones_activas"], 3)
+        self.assertEqual(resumen["tokens_generados_total"], 540)
+        self.assertEqual(resumen["modelo"], "qwen3.5-2b")
+
+        logs = self.client.get("/api/metricas?limite=10").json()
+        self.assertEqual(len(logs), 3)
+        self.assertEqual({row["tokens_generados"] for row in logs}, {180})
+        self.assertEqual(len({row["usuario_o_sesion"] for row in logs}), 3)
+        for client in workers:
+            client.close()
+
 
 if __name__ == "__main__":
     unittest.main()

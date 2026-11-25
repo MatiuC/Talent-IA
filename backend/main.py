@@ -765,7 +765,7 @@ async def resumen_metricas() -> ResumenMetricas:
     cpu, ram = capturar_recursos()
     resumen["cpu_porcentaje_actual"] = cpu
     resumen["ram_porcentaje_actual"] = ram
-    resumen["modelo"] = settings.ollama_model
+    resumen["modelo"] = resumen.get("modelo") or settings.ollama_model
     return ResumenMetricas(**resumen)
 
 
@@ -814,6 +814,7 @@ class LocalEvaluation(BaseModel):
     error: str = Field(default="", max_length=1000)
     latencia: float = Field(default=0, ge=0, le=86400)
     throughput: float = Field(default=0, ge=0, le=100000)
+    tokens: int = Field(default=0, ge=0, le=1_000_000)
 
 @app.post('/api/vacantes/{vacante_id}/preparar-local')
 async def preparar_local(vacante_id: int, request: Request, archivos: List[UploadFile] = File(...)):
@@ -840,6 +841,13 @@ async def preparar_local(vacante_id: int, request: Request, archivos: List[Uploa
                 {'role': 'user', 'content': construir_prompt_usuario(recortar_para_llm(extraction.texto), vacante['titulo'], vacante['descripcion'], vacante['habilidades_obligatorias'], vacante['anios_experiencia_min'])}]
             job['format'] = EvaluacionCV.model_json_schema()
         jobs.append(job)
+    logger.info(
+        "Lote cliente preparado | vacante=%s | archivos=%s | sesion=usuario-%s:%s",
+        vacante_id,
+        len(archivos),
+        user["id"],
+        user["name"],
+    )
     return {'jobs': jobs}
 
 @app.post('/api/candidatos/{candidato_id}/resultado-local')
@@ -856,6 +864,8 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
     ev = body.evaluacion
     if not ev and not body.error:
         raise HTTPException(422, 'Falta evaluación o detalle del error.')
+    cpu, ram = capturar_recursos()
+    sesion_log = f"usuario-{request.state.user['id']}:{request.state.user['name']}"[:80]
     if ev:
         await asyncio.to_thread(db.guardar_evaluacion, candidato_id, candidate['vacante_id'], ev.anios_experiencia,
             ev.habilidades_detectadas, ev.puntaje, ev.cumple_minimos, ev.justificacion_evidencia,
@@ -863,11 +873,34 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
         await asyncio.to_thread(db.actualizar_candidato, candidato_id, nombre_candidato=ev.nombre_candidato,
             email=ev.email, email_valido=email_es_valido(ev.email), estado=ESTADO_PENDIENTE,
             detalle='Evaluación ejecutada en el computador del cliente; pendiente de revisión humana.')
+        logger.info(
+            "CV %s evaluado (cliente) | sesion=%s | vacante=%s | puntaje=%s | %.2fs | %.1f tok/s | tokens=%s | cpu=%.1f%% | ram=%.1f%% | modelo=%s",
+            candidate["archivo_cv"],
+            sesion_log,
+            candidate["vacante_id"],
+            ev.puntaje,
+            body.latencia,
+            body.throughput,
+            body.tokens,
+            cpu,
+            ram,
+            body.modelo,
+        )
     else:
         await asyncio.to_thread(db.actualizar_candidato, candidato_id, estado=ESTADO_ERROR, detalle=body.error)
-    await asyncio.to_thread(db.registrar_metrica, f"usuario-{request.state.user['id']}", candidate['archivo_cv'],
-        body.latencia, body.throughput, 0, 0, 'EXITO' if ev else 'ERROR', body.error,
-        candidate['vacante_id'], candidato_id, 0, body.modelo)
+        logger.warning(
+            "CV %s con error (cliente) | sesion=%s | vacante=%s | %.2fs | cpu=%.1f%% | ram=%.1f%% | detalle=%s",
+            candidate["archivo_cv"],
+            sesion_log,
+            candidate["vacante_id"],
+            body.latencia,
+            cpu,
+            ram,
+            body.error[:200],
+        )
+    await asyncio.to_thread(db.registrar_metrica, sesion_log, candidate['archivo_cv'],
+        body.latencia, body.throughput, cpu, ram, 'EXITO' if ev else 'ERROR', body.error,
+        candidate['vacante_id'], candidato_id, body.tokens, body.modelo)
     return {'ok': True}
 
 

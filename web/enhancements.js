@@ -202,7 +202,7 @@ async function runLocalAnalysis({vacancy,files=[],resume=false}){
    try{
     const raw=await bridge('/chat',{messages:job.messages,format:job.format});
     const content=raw.message.content.replace(/<think>[\s\S]*?<\/think>/g,'').replace(/^```(?:json)?\s*|\s*```$/g,'').trim();
-    body={evaluacion:JSON.parse(content),modelo:raw.model||'modelo local',latencia:(performance.now()-start)/1000,throughput:raw.eval_duration?raw.eval_count/(raw.eval_duration/1e9):0};
+    body={evaluacion:JSON.parse(content),modelo:raw.model||'modelo local',latencia:(performance.now()-start)/1000,throughput:raw.eval_duration?raw.eval_count/(raw.eval_duration/1e9):0,tokens:Number(raw.eval_count||0)};
    }catch(error){
     const msg=error?.message||'Error del asistente local.';
     if(isConnectionErrorMessage(msg)){

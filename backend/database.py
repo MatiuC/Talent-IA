@@ -605,6 +605,9 @@ def resumen_metricas() -> Dict[str, Any]:
             FROM logs_metricas
             """
         ).fetchone()
+        ultimo = conn.execute(
+            "SELECT modelo FROM logs_metricas WHERE modelo IS NOT NULL AND TRIM(modelo) <> '' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
 
     total = int(fila["total"] or 0)
     exitos = int(fila["exitos"] or 0)
@@ -618,6 +621,7 @@ def resumen_metricas() -> Dict[str, Any]:
         "tokens_generados_total": int(fila["tokens"] or 0),
         "sesiones_activas": int(fila["sesiones"] or 0),
         "tasa_exito_porcentaje": round((exitos / total * 100.0), 1) if total else 0.0,
+        "modelo": str(ultimo["modelo"]) if ultimo else "",
     }
 
 
