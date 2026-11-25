@@ -26,6 +26,7 @@ import httpx
 from pydantic import ValidationError
 
 from backend.config import settings
+from backend.pdf_extractor import estimar_anios_experiencia
 from backend.schemas import EvaluacionCV
 
 logger = logging.getLogger("talentia.llm")
@@ -36,7 +37,7 @@ logger = logging.getLogger("talentia.llm")
 SYSTEM_PROMPT = """Eres un analista objetivo de RR.HH. para PYMEs. Responde SOLO con un JSON valido en espanol que cumpla el esquema.
 Reglas:
 1. Usa unicamente datos literales del CV; prohibido inventar o suponer. Si falta un dato usa "" o 0.
-2. anios_experiencia: suma real de experiencia profesional evidenciada (0 si no consta).
+2. anios_experiencia: numero real de anios de experiencia laboral (convierte palabras como "dos anios" a 2 y resta rangos de fechas de experiencia laboral; excluye formacion academica; 0 si no consta).
 3. habilidades_detectadas: solo tecnologias/herramientas mencionadas literalmente en el CV.
 4. cumple_minimos: true SOLO si cumple TODAS las habilidades obligatorias Y los anios minimos.
 5. puntaje (1-5): 5=cumple todo + diferencial relevante; 4=cumple todos los minimos; 3=cumple mayoria (falta 1 requisito); 2=parcial (faltan varios); 1=no corresponde al perfil.
@@ -241,13 +242,18 @@ def construir_prompt_usuario(
     habilidades: List[str],
     anios_min: int,
 ) -> str:
-    return PLANTILLA_USUARIO.format(
+    prompt = PLANTILLA_USUARIO.format(
         titulo=titulo or "(sin titulo)",
         descripcion=(descripcion or "(sin descripcion)").strip(),
         habilidades=", ".join(habilidades) if habilidades else "(no especificadas)",
         anios_min=anios_min,
         texto_cv=texto_cv.strip(),
     )
+    estimado = estimar_anios_experiencia(texto_cv)
+    if estimado and estimado > 0:
+        nota = f"\nReferencia automatica de experiencia laboral detectada en el CV: {estimado:g} anios (valida con el texto).\n"
+        prompt = prompt.replace("\n### TAREA", f"{nota}\n### TAREA", 1)
+    return prompt
 
 
 # ---------------------------------------------------------------------------

@@ -438,6 +438,74 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/api/candidatos/{cid2}/rechazar", json={"motivo": "Revisado por líder"}).status_code, 200)
         self.assertEqual(self.client.get(f"/api/candidatos/{cid2}").json()["estado"], "RECHAZADO")
 
+    def test_experience_parser_and_word_coercion(self):
+        from backend.pdf_extractor import estimar_anios_experiencia
+
+        valeria_cv = (
+            "Valeria Mendoza Torres\n"
+            "PERFIL PROFESIONAL\n"
+            "Profesional de análisis de datos con dos años de experiencia laboral en SQL.\n"
+            "EXPERIENCIA LABORAL\n"
+            "Asistente de análisis de datos | Nexo Datos\n"
+            "Enero de 2024 - diciembre de 2025 | Quito, Ecuador\n"
+            "FORMACIÓN ACADÉMICA\n"
+            "Tecnología Superior | 2020 - 2023\n"
+        )
+        self.assertEqual(estimar_anios_experiencia(valeria_cv), 2.0)
+        self.assertEqual(estimar_anios_experiencia("Más de catorce años de experiencia en logística."), 14.0)
+        self.assertEqual(estimar_anios_experiencia("Trayectoria de 6 meses de experiencia en soporte."), 0.5)
+        # Overlapping jobs merge into 2.0 total years (Jan 2023 - Dec 2024)
+        overlap_cv = (
+            "EXPERIENCIA LABORAL\n"
+            "Analista | Empresa A\n"
+            "Enero de 2023 - diciembre de 2024\n"
+            "Consultora | Empresa B\n"
+            "Junio de 2023 - junio de 2024\n"
+        )
+        self.assertEqual(estimar_anios_experiencia(overlap_cv), 2.0)
+        # Academic dates alone must NOT count as work experience
+        student_cv = "FORMACIÓN ACADÉMICA\nIngeniería en Sistemas | 2020 - 2023\n"
+        self.assertIsNone(estimar_anios_experiencia(student_cv))
+
+        self.assertEqual(
+            EvaluacionCV(anios_experiencia="dos años").anios_experiencia,
+            2.0,
+        )
+        self.assertEqual(
+            EvaluacionCV(anios_experiencia="un año y medio").anios_experiencia,
+            1.5,
+        )
+
+    def test_resultado_local_recovers_zero_experience_from_cv_pdf(self):
+        vacancy_id = self.vacancy()
+        pdf = self.pdf(
+            "Valeria Mendoza Torres\n"
+            "PERFIL PROFESIONAL\n"
+            "Profesional con dos años de experiencia laboral en SQL y Excel.\n"
+            "EXPERIENCIA LABORAL\n"
+            "Asistente de análisis | Nexo Datos\n"
+            "Enero de 2024 - diciembre de 2025\n"
+            "FORMACIÓN ACADÉMICA\n"
+            "Instituto Horizonte | 2020 - 2023\n"
+        )
+        prep = self.client.post(
+            f"/api/vacantes/{vacancy_id}/preparar-local",
+            files=[("archivos", ("valeria.pdf", pdf, "application/pdf"))],
+        )
+        self.assertEqual(prep.status_code, 200, prep.text)
+        job = prep.json()["jobs"][0]
+        self.assertIn("Referencia automatica de experiencia laboral detectada en el CV: 2 anios", job["messages"][1]["content"])
+
+        evaluation, _ = self.evaluation()
+        evaluation.anios_experiencia = 0.0
+        saved = self.client.post(
+            f"/api/candidatos/{job['id']}/resultado-local",
+            json={"evaluacion": evaluation.model_dump(), "modelo": "qwen3.5-2b", "latencia": 1.0},
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        candidate = self.client.get(f"/api/candidatos/{job['id']}").json()
+        self.assertEqual(candidate["anios_experiencia"], 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

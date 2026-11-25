@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.pdf_extractor import parsear_numero_espanol
+
 # ---------------------------------------------------------------------------
 # Estados del candidato dentro del flujo
 # ---------------------------------------------------------------------------
@@ -194,8 +196,13 @@ class EvaluacionCV(BaseModel):
         if isinstance(valor, (int, float)):
             numero = float(valor)
         else:
-            encontrado = re.search(r"\d+(?:[.,]\d+)?", str(valor or ""))
-            numero = float(encontrado.group(0).replace(",", ".")) if encontrado else 0.0
+            texto = str(valor or "")
+            numero_es = parsear_numero_espanol(texto)
+            if numero_es is not None:
+                numero = numero_es
+            else:
+                encontrado = re.search(r"\d+(?:[.,]\d+)?", texto)
+                numero = float(encontrado.group(0).replace(",", ".")) if encontrado else 0.0
         return max(0.0, min(60.0, numero))
 
     @field_validator("habilidades_detectadas", mode="before")

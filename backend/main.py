@@ -48,7 +48,7 @@ from backend.llm_agent import (
     inferencias_en_curso,
     verificar_ollama,
 )
-from backend.pdf_extractor import PYMUPDF_DISPONIBLE, extraer_texto, recortar_para_llm
+from backend.pdf_extractor import PYMUPDF_DISPONIBLE, estimar_anios_experiencia, extraer_texto, recortar_para_llm
 from backend.schemas import (
     ESTADO_APROBADO,
     ESTADO_CONTACTO_PENDIENTE,
@@ -481,11 +481,16 @@ async def _procesar_cv(
         )
 
         latencia = time.perf_counter() - inicio
+        anios_exp = evaluacion.anios_experiencia
+        if anios_exp <= 0:
+            est = estimar_anios_experiencia(texto_cv) or estimar_anios_experiencia(evaluacion.justificacion_evidencia)
+            if est and est > 0:
+                anios_exp = est
         await asyncio.to_thread(
             db.guardar_evaluacion,
             candidato_id,
             vacante_id,
-            evaluacion.anios_experiencia,
+            anios_exp,
             evaluacion.habilidades_detectadas,
             evaluacion.puntaje,
             evaluacion.cumple_minimos,
@@ -965,7 +970,7 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
     if not candidate:
         raise HTTPException(404, 'Candidato no encontrado.')
     with db.conexion() as conn:
-        row = conn.execute('SELECT sesion FROM candidatos WHERE id=?', (candidato_id,)).fetchone()
+        row = conn.execute('SELECT sesion, ruta_archivo FROM candidatos WHERE id=?', (candidato_id,)).fetchone()
     if row['sesion'] != f"usuario-{request.state.user['id']}":
         raise HTTPException(403, 'El análisis pertenece a otra sesión de usuario.')
     if candidate['estado'] not in {'ANALIZANDO', ESTADO_ERROR}:
@@ -978,7 +983,19 @@ async def resultado_local(candidato_id: int, body: LocalEvaluation, request: Req
     gpu_txt = f"{gpu_pct:.1f}%" if gpu_pct is not None else "n/d"
     sesion_log = f"usuario-{request.state.user['id']}:{request.state.user['name']}"[:80]
     if ev:
-        await asyncio.to_thread(db.guardar_evaluacion, candidato_id, candidate['vacante_id'], ev.anios_experiencia,
+        anios_exp = ev.anios_experiencia
+        if anios_exp <= 0:
+            ruta_cv = Path(row["ruta_archivo"]) if row["ruta_archivo"] else None
+            est = None
+            if ruta_cv and ruta_cv.is_file():
+                extr = await asyncio.to_thread(extraer_texto, ruta_cv)
+                if extr.legible:
+                    est = estimar_anios_experiencia(extr.texto)
+            if not est:
+                est = estimar_anios_experiencia(ev.justificacion_evidencia)
+            if est and est > 0:
+                anios_exp = est
+        await asyncio.to_thread(db.guardar_evaluacion, candidato_id, candidate['vacante_id'], anios_exp,
             ev.habilidades_detectadas, ev.puntaje, ev.cumple_minimos, ev.justificacion_evidencia,
             body.modelo, body.latencia, body.throughput)
         await asyncio.to_thread(db.actualizar_candidato, candidato_id, nombre_candidato=ev.nombre_candidato,
