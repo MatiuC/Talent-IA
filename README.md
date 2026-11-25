@@ -1,13 +1,22 @@
-# TalentIA · Prueba local con LM Studio
+# TalentIA · Selección inteligente de personal con IA local
 
-Web de selección de personal con cuentas, vacantes, carga de hasta 100 PDF, evaluación con evidencias, ranking y calendario de entrevistas. La IA se ejecuta en el computador del usuario mediante LM Studio. No necesitas servicios de Google.
+Web de selección de personal con roles (**Reclutador líder** y **Reclutador**), gestión de vacantes, carga de hasta **100 currículums en PDF** por lote, progreso flotante persistente con doble barra, evaluación estructurada con evidencias en **LM Studio**, descarte rápido para puntajes bajos (`1/5` y `2/5`), ranking, calendario de entrevistas, métricas técnicas en vivo (latencia, *throughput*, CPU, RAM, GPU/VRAM y logs) y diseño responsivo para pantallas divididas.
+
+La inferencia con el LLM se ejecuta **100 % en el computador del cliente** mediante el asistente local (`127.0.0.1:11435`) conectado a **LM Studio** (`127.0.0.1:1234`), mientras que los PDF, resultados y auditoría se guardan en **SQLite (modo WAL)**. No necesitas servicios de Google para usar el flujo principal (puedes activarlos opcionalmente por reclutador).
+
+---
 
 ## Requisitos
-- Python 3.12 o superior y Git.
-- LM Studio 0.4 o superior con un modelo de conversación descargado (por ejemplo, Gemma o Qwen). Activa su servidor local en `http://127.0.0.1:1234` y carga el modelo. El asistente detecta el modelo cargado.
-- Memoria suficiente para el modelo y conexión solo para las descargas iniciales.
 
-## Windows: iniciar la prueba
+- **Python 3.12** o superior y **Git**.
+- **LM Studio 0.4** o superior con un modelo de conversación compatible con respuestas JSON estructuradas (por ejemplo, **Qwen 3.5 2B** o **Gemma**).
+  - Configura el servidor local en `http://127.0.0.1:1234`.
+  - Recomendado para concurrencia de 3 usuarios en una GPU local: `context_length: 8192` y `parallel: 4`, con *Reasoning / Thinking* desactivado.
+- En equipos con GPU NVIDIA, `nvidia-smi` disponible en el sistema habilita automáticamente la telemetría de uso de **GPU %** y **VRAM** en la vista **Actividad**.
+
+---
+
+## Inicio rápido de demostración en vivo (Windows)
 
 ```powershell
 git clone https://github.com/MatiuC/Talent-IA.git
@@ -15,29 +24,47 @@ cd Talent-IA
 powershell -ExecutionPolicy Bypass -File .\probar-local.ps1
 ```
 
-Este comando instala las dependencias, crea una base aislada `data/pruebas.db`, una cuenta pública de demostración y dos vacantes (Analista de datos junior y Soporte técnico). No modifica una base personal existente.
-
-**Acceso público de pruebas:**
-
-- Correo: `prueba@talentia.local`
-- Contraseña: `_-dF06kcIpgYIKvNCdq2`
-
-Las nuevas instalaciones usan estas mismas credenciales, que también aparecen en la terminal y se guardan en `data/acceso-pruebas.txt`, excluido de Git. Si ya creaste una cuenta con otra contraseña, conserva la original. Este acceso compartido es solo para demostraciones con datos de prueba.
-
-Abre http://localhost:8001 y entra con esas credenciales. Mantén la terminal abierta.
-
-En una segunda terminal, desde la carpeta del proyecto:
+La primera vez, `probar-local.ps1` crea `.venv`, instala `requirements.txt` e inicializa `data/pruebas.db` y `data/acceso-pruebas.txt` (excluidos de Git). Para arrancar todo en **una sola terminal** en usos posteriores:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\companion\Iniciar-LMStudio.ps1
+powershell -ExecutionPolicy Bypass -File .\iniciar-demo.ps1
 ```
 
-Abre http://127.0.0.1:11435, copia la clave de vinculación y pégala en TalentIA → Configuración → Motor de este computador → Conectar mi computador. Si el navegador lo solicita, permite el acceso local. La clave permanece durante la sesión de pestaña; el modelo permanece guardado en LM Studio entre sesiones.
+### Qué automatiza `iniciar-demo.ps1`
+- Verifica `.venv` y `data/pruebas.db`.
+- Comprueba LM Studio en `http://127.0.0.1:1234` (intenta iniciarlo con `lms server start` si falta y valida si hay un modelo cargado; admite `-Modelo <id>` para cargarlo automáticamente).
+- Inicia el asistente local en `http://127.0.0.1:11435` con `--origin http://localhost:8001` (y lo detiene limpiamente al cerrar con `Ctrl+C`).
+- Abre en tu navegador la clave del asistente (`http://127.0.0.1:11435`) y TalentIA (`http://localhost:8001`), o permite omitirlo con `-SinAbrirNavegador`.
+- Ejecuta Uvicorn con los logs estructurados en tiempo real en la consola.
+- Parámetros útiles: `-RestaurarLimpia` (restaura `data/pruebas.db` desde `data/pruebas-presentacion-limpia.db` si el servidor está detenido), `-ListenAddress 0.0.0.0`, `-Port 8001`.
 
-Selecciona una vacante y carga tu CV. La evaluación se hace en tu equipo y se guarda en la base local. Puedes subir el mismo CV a ambas vacantes para comparar su ajuste. No uses `?demo=1` para esta prueba: esa vista solo muestra ejemplos.
+### Reiniciar datos a cero entre pruebas (`limpiar-demo.ps1`)
+Para vaciar candidatos, evaluaciones, entrevistas, métricas y PDFs subidos conservando usuarios, sesiones activas, conexión Google y vacantes iniciales:
 
-## Linux/macOS
+```powershell
+powershell -ExecutionPolicy Bypass -File .\limpiar-demo.ps1
+```
 
+Opciones adicionales:
+- `-CerrarSesiones`: también invalida las sesiones activas.
+- `-RestaurarDesdeRespaldo`: reemplaza `data/pruebas.db` desde `data/pruebas-presentacion-limpia.db` (requiere detener el servidor antes).
+
+---
+
+## Inicio manual por terminales
+
+### Windows
+1. **Terminal 1 (Servidor web):**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\probar-local.ps1
+   ```
+2. **Terminal 2 (Asistente local + LM Studio):**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\companion\Iniciar-LMStudio.ps1
+   ```
+3. Abre `http://127.0.0.1:11435`, copia la clave de vinculación y pégala en **TalentIA → Configuración → Motor de este computador → Conectar mi computador** (permite el acceso a red local si el navegador lo solicita).
+
+### Linux / macOS
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -45,42 +72,59 @@ pip install -r requirements.txt
 python preparar_prueba.py
 DATABASE_PATH=data/pruebas.db UPLOADS_DIR=data/pruebas-uploads FORZAR_SIMULACION=true python -m uvicorn backend.main:app --host 127.0.0.1 --port 8001
 ```
-
 En otra terminal, con LM Studio activo:
-
 ```bash
 python3 companion/asistente.py --origin http://localhost:8001
 ```
 
-## Funcionalidad y límites
-- Completar/reabrir vacantes preserva el historial; las cerradas no admiten nuevos candidatos.
-- Ordenar candidatos por mayor/menor ajuste o recepción.
-- Calendario mensual navegable. Los enlaces Meet son demostrativos y no crean reuniones.
-- Los correos se preparan en la aplicación de correo del usuario; no se envían automáticamente.
-- PDF con texto seleccionable; los escaneados requieren revisión manual. No hay OCR.
-- La IA puede equivocarse: revisa el CV original y sus evidencias. La decisión es humana.
-- Los CV y los resultados se guardan en la instalación de la web. Si se aloja en otro servidor, los documentos sí se transfieren a ese servidor, aunque la inferencia siga siendo local.
-- Una cuenta de pruebas y sus dos vacantes se generan en cada equipo; no se distribuyen bases de datos ni documentos privados.
+> Usa `http://localhost:8001` (no `?demo=1` ni `127.0.0.1:8001`) para la prueba real con LM Studio; `?demo=1` muestra únicamente datos ilustrativos de ejemplo.
 
-## Pruebas
+---
+
+## Roles, concurrencia y métricas
+
+### Aislamiento por rol
+- **Reclutador líder (`admin`)**: visualiza y gestiona todas las vacantes, candidatos, PDFs, entrevistas, métricas y logs de todo el equipo, además de crear cuentas desde **Configuración**.
+- **Reclutador (`recruiter`)**: visualiza y gestiona únicamente los currículums, entrevistas, contadores por vacante y métricas que él mismo sube; cualquier acceso directo a perfiles de otro reclutador responde `403`.
+
+### Concurrencia de 3 usuarios simultáneos
+- **Base de datos**: SQLite configurado con `PRAGMA journal_mode=WAL`, `busy_timeout = 30s`, hilos con `asyncio.to_thread` y transacción atómica en aprobación de entrevistas (`409` ante doble aprobación simultánea).
+- **Asistente local ([companion/asistente.py](companion/asistente.py))**: servidor multihilo (`ThreadingHTTPServer`) con `TALENTIA_CONCURRENCY=3` por defecto, caché de metadatos de LM Studio (`30 s` con respaldo ante carga alta), cálculo dinámico de contexto por ranura paralela (`context_length // parallel`) con reintento automático ante exceso de contexto y reporte detallado de errores HTTP.
+
+### Panel de Actividad del sistema (`#metrics`)
+- **KPIs**: `CV procesados`, `Tiempo promedio (s)`, `Generación del modelo (tokens/s)` y `Análisis exitosos (%)`.
+- **Recursos de tu equipo**: barras en vivo de **Procesador (%)**, **Memoria RAM (%)**, **GPU (%)** y **Memoria GPU / VRAM (MB y %)** mediante `psutil` + `nvidia-smi`.
+- **Un vistazo al motor**: modelo realmente ejecutado, latencia máxima, tokens generados totales, sesiones en el historial y errores registrados.
+- **Historial de análisis** y **logs en consola**: trazabilidad por archivo, sesión (`usuario-id:Nombre`), tiempo, tokens/s, tokens, CPU/RAM/GPU, modelo y estado.
+
+---
+
+## Funcionalidad y límites
+
+- **Progreso flotante persistente con doble barra**: aparece en la esquina superior derecha únicamente durante análisis activos, resúmenes sin cerrar o recuperación tras recarga (`/api/pendientes-local/resumen`). Combina una barra superior animada de actividad y una barra porcentual de avance, conserva contadores y solicitudes al navegar por secciones y bloquea dobles envíos.
+- **Tolerancia a errores y reanudación sin duplicados**: los perfiles con `ERROR_PROCESAMIENTO` se ocultan de **Candidatos** y de los totales visibles, pero permanecen guardados para reintentarse con **Retomar pendientes** actualizando el mismo registro. Ante pérdida de conexión, detiene limpiamente el lote conservando lo ya guardado.
+- **Descarte rápido**: en tablas de **Candidatos**, los perfiles en estado **Por revisar** con puntaje `1/5` o `2/5` muestran el botón inline **Descartar candidato** para registrar el motivo sin abrir primero el detalle completo.
+- **Diseño responsivo**: a partir de `<= 1040 px` (ventanas divididas o en una esquina de pantalla) el menú lateral colapsa en cajón deslizable (`☰`) con fondo tocable y sin desbordamiento horizontal.
+- **Extracción PDF**: requiere PDFs con texto seleccionable (sin OCR; los escaneados o ilegibles pasan automáticamente a **Revisión manual**).
+- **Criterio humano**: la IA aporta puntaje orientativo (`1` a `5`) y citas textuales como evidencia; la decisión final y el agendamiento siempre requieren confirmación humana.
+- **Privacidad**: nunca subas a Git `data/`, `.env`, `credentials.json`, claves ni documentos privados.
+
+---
+
+## Pruebas automatizadas
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Las pruebas usan bases temporales y simulan los servicios externos. Se verificó además una extracción real del CV con Qwen en LM Studio. La integración con Google y la interfaz antigua de Streamlit son históricas y no hacen falta para este recorrido.
+Incluye **21 pruebas** en `tests/` (`test_auth.py`, `test_google_accounts.py`, `test_workflows.py`) que validan autenticación, aislamiento de reclutadores vs. reclutador líder, recuperación de pendientes sin duplicados, inferencia local del cliente y concurrencia de 3 usuarios autenticados.
 
-Para publicar el backend en Internet, consulta ARQUITECTURA-CLIENTE.md. GitHub almacena el código; no ejecuta este servidor Python. No publiques `data/`, `.env`, claves ni credenciales personales. Las credenciales de demostración anteriores son públicas intencionalmente.
+---
 
 ## Google Calendar y Gmail opcionales
 
-Cada reclutador puede conectar su propia cuenta desde Configuración. Sigue [GOOGLE.md](GOOGLE.md) para configurar el cliente OAuth de Google Cloud. La integración requiere consentimiento y confirmación de cada entrevista; sin conectar Google se conserva el modo simulación. Usa cuentas TalentIA individuales, no la cuenta pública compartida, para conexiones personales.
-
+Cada reclutador puede conectar su propia cuenta desde **Configuración** siguiendo [GOOGLE.md](GOOGLE.md) para configurar `credentials.json` en Google Cloud Console. Los envíos reales requieren confirmación explícita en cada entrevista; sin Google conectado, el sistema opera en **modo simulación** sin enviar correos ni crear eventos reales.
 
 ## Otros modelos en LM Studio
 
-El asistente detecta el primer modelo de conversación cargado en LM Studio 0.4 o superior: Gemma, Qwen u otro compatible con respuestas JSON estructuradas. Los modelos de embeddings no sirven para evaluar CV. Carga solo el modelo que quieras usar; si tienes varios cargados puedes elegir su identificador con la variable de entorno `LM_STUDIO_MODEL` antes de iniciar el asistente.
-
-La clave de vinculación de TalentIA es independiente del modelo y se conserva al cambiarlo. Inicia `Iniciar-LMStudio.ps1` (dentro de companion si usas el repositorio) y abre http://127.0.0.1:11435. El iniciador abre el asistente aunque falte cargar el modelo. Comprueba en Configuración qué modelo está listo.
-
-La compatibilidad y calidad dependen del modelo y de la memoria disponible: no todos admiten el formato JSON requerido. El servidor de LM Studio debe estar activo en 127.0.0.1:1234, sin autenticación API adicional para esta configuración.
+El asistente detecta automáticamente el primer modelo LLM cargado en LM Studio 0.4 o superior (Qwen, Gemma u otro compatible con `json_schema`). Si tienes varios cargados, define `LM_STUDIO_MODEL` antes de iniciar el asistente. La clave de vinculación (`%LOCALAPPDATA%\TalentIA\companion-key`) es independiente del modelo y se conserva entre sesiones.
