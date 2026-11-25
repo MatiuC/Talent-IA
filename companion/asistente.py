@@ -25,6 +25,7 @@ if not key_file.exists():
 KEY = key_file.read_text(encoding='utf-8').strip()
 progress = {'running': False, 'status': 'Sin descarga activa', 'completed': 0, 'total': 0}
 lock = threading.Lock()
+_lm_cache = {'details': None, 'ts': 0.0}
 MAX_CONCURRENT = max(1, min(8, int(os.environ.get('TALENTIA_CONCURRENCY', '3'))))
 inference = threading.Semaphore(MAX_CONCURRENT)
 
@@ -40,29 +41,45 @@ def lmstudio(path, data=None, timeout=600):
         headers={'Content-Type': 'application/json'})
     return urllib.request.urlopen(request, timeout=timeout)
 
-def lm_details():
+def lm_details(force=False):
+    now = time.monotonic()
+    if not force:
+        with lock:
+            if _lm_cache['details'] is not None and (now - _lm_cache['ts']) < 30.0:
+                return dict(_lm_cache['details'])
     try:
-        with urllib.request.urlopen('http://127.0.0.1:1234/api/v1/models', timeout=3) as r:
+        with urllib.request.urlopen('http://127.0.0.1:1234/api/v1/models', timeout=10) as r:
             models = json.load(r).get('models', [])
         loaded = [(m, i) for m in models if m.get('type') == 'llm' for i in m.get('loaded_instances', [])]
         preferred = os.environ.get('LM_STUDIO_MODEL', '')
         if preferred:
             loaded = [(m, i) for m, i in loaded if preferred in {m.get('key'), i.get('id')}]
         if not loaded:
+            with lock:
+                _lm_cache['details'] = None
+                _lm_cache['ts'] = now
             return None
         m, instance = loaded[0]
-        return {
+        info = {
             'id': instance['id'],
             'reasoning_off': 'off' in m.get('capabilities', {}).get('reasoning', {}).get('allowed_options', []),
             'parallel': int(instance.get('config', {}).get('parallel') or 1),
             'context_length': int(instance.get('config', {}).get('context_length') or 8192),
         }
+        with lock:
+            _lm_cache['details'] = dict(info)
+            _lm_cache['ts'] = time.monotonic()
+        return info
     except Exception:
+        if not force:
+            with lock:
+                if _lm_cache['details'] is not None and (now - _lm_cache['ts']) < 300.0:
+                    return dict(_lm_cache['details'])
         return None
 
 
-def lm_model():
-    model = lm_details()
+def lm_model(force=False):
+    model = lm_details(force=force)
     return model['id'] if model else None
 
 def pull():
@@ -146,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(403, {'error': 'Origen o clave de vinculación no válidos.'}); return
         if self.path != '/status':
             self.respond(404, {}); return
-        local_model = lm_model()
+        local_model = lm_model(force=True)
         if local_model:
             self.respond(200, {**progress, 'ready': True, 'model': local_model, 'provider': 'LM Studio', 'concurrency': MAX_CONCURRENT, 'status': 'Modelo disponible en LM Studio.'})
             return
@@ -173,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, progress)
             elif self.path == '/chat':
                 with inference:
-                    details = lm_details()
+                    details = lm_details(force=False)
                     local_model = details['id'] if details else None
                     if local_model:
                         started = time.monotonic()
@@ -200,6 +217,11 @@ class Handler(BaseHTTPRequestHandler):
                                 if scale == 1.0 and 'context size' in err_body.lower():
                                     continue
                                 raise ValueError(f'HTTP {err.code}: {err_body.strip()[:300] or err.reason}') from err
+                            except urllib.error.URLError as err:
+                                with lock:
+                                    _lm_cache['details'] = None
+                                    _lm_cache['ts'] = 0.0
+                                raise ValueError(f'LM Studio no responde en 127.0.0.1:1234 ({err.reason}).') from err
                         if not result['choices'][0]['message'].get('content'):
                             raise ValueError('LM Studio devolvió una respuesta vacía. Desactiva Thinking para este modelo y vuelve a intentar.')
                         self.respond(200, {'message': result['choices'][0]['message'],
